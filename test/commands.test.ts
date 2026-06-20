@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { helpText, parseInput, parseRelatedArgs } from "../src/commands.js";
+import { helpText, parseInput, parseRelatedArgs, parseRelatedSelectionArgs } from "../src/commands.js";
 
 test("parses note input", () => {
   assert.deepEqual(parseInput("remember the thing"), {
@@ -38,6 +38,14 @@ test("parses related command with optional query", () => {
   });
 });
 
+test("parses related result selection command", () => {
+  assert.deepEqual(parseInput("/note 2 snippet"), {
+    kind: "command",
+    name: "note",
+    args: "2 snippet"
+  });
+});
+
 test("parses related args with room for future flags", () => {
   assert.deepEqual(parseRelatedArgs("--strict launch plan"), {
     mode: "balanced",
@@ -46,8 +54,24 @@ test("parses related args with room for future flags", () => {
   });
 });
 
+test("parses related selection args", () => {
+  assert.deepEqual(parseRelatedSelectionArgs("2 snippet"), {
+    index: 2,
+    field: "snippet"
+  });
+  assert.deepEqual(parseRelatedSelectionArgs("3"), {
+    index: 3,
+    field: "all"
+  });
+  assert.deepEqual(parseRelatedSelectionArgs("wat path"), {
+    index: undefined,
+    field: "path"
+  });
+});
+
 test("help text documents related command", () => {
   assert.match(helpText(), /\/related \[query\]/);
+  assert.match(helpText(), /\/note <number>/);
 });
 
 test("parses compose mode commands", () => {

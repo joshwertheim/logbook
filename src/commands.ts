@@ -7,6 +7,7 @@ export type SlashCommandName =
   | "summary"
   | "search"
   | "related"
+  | "note"
   | "check"
   | "provider"
   | "compose"
@@ -37,6 +38,7 @@ const commands = new Set<SlashCommandName>([
   "summary",
   "search",
   "related",
+  "note",
   "check",
   "provider",
   "compose",
@@ -80,6 +82,7 @@ export function helpText(): string {
     "/summary - create a short summary",
     "/search <query> - search stored notes",
     "/related [query] - find saved notes related to the current note or supplied query",
+    "/note <number> [all|snippet|path|id|reason] - show details for a numbered /related result",
     "/check <question> - check saved notes by natural date phrases, such as what happened today",
     "/provider - show active model/provider config",
     "/compose - start multiline note capture; finish with /done or discard with /cancel",
@@ -92,6 +95,13 @@ export interface RelatedCommandArgs {
   mode: "balanced";
   query: string;
   flags: string[];
+}
+
+export type RelatedSelectionField = "all" | "snippet" | "path" | "id" | "reason";
+
+export interface RelatedSelectionArgs {
+  index: number | undefined;
+  field: RelatedSelectionField;
 }
 
 export function parseRelatedArgs(args: string): RelatedCommandArgs {
@@ -112,4 +122,23 @@ export function parseRelatedArgs(args: string): RelatedCommandArgs {
     query: queryParts.join(" ").trim(),
     flags
   };
+}
+
+export function parseRelatedSelectionArgs(args: string): RelatedSelectionArgs {
+  const [numberToken, fieldToken] = args.trim().split(/\s+/, 2);
+  const index = numberToken ? Number.parseInt(numberToken, 10) : undefined;
+  const field = isRelatedSelectionField(fieldToken) ? fieldToken : "all";
+
+  return {
+    index: Number.isInteger(index) ? index : undefined,
+    field
+  };
+}
+
+function isRelatedSelectionField(value: string | undefined): value is RelatedSelectionField {
+  return value === "all"
+    || value === "snippet"
+    || value === "path"
+    || value === "id"
+    || value === "reason";
 }

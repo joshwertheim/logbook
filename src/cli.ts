@@ -3,12 +3,12 @@ import { clearLine, cursorTo } from "node:readline";
 import { createInterface } from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
 import { parseCheckQuery } from "./check.js";
-import { parseInput, helpText, parseRelatedArgs } from "./commands.js";
+import { parseInput, helpText, parseRelatedArgs, parseRelatedSelectionArgs } from "./commands.js";
 import { loadDotEnv } from "./env.js";
 import { OpenAICompatibleProvider, providerConfigFromEnv, providerStatus, ProviderConfigError } from "./provider.js";
 import { NoteSession } from "./session.js";
 import { defaultStoragePaths, NoteStore } from "./storage.js";
-import type { RelatedResult, RelatedStrength } from "./types.js";
+import type { RelatedResult } from "./types.js";
 
 const autosaveDelayMs = 2000;
 
@@ -22,6 +22,7 @@ async function main(): Promise<void> {
   const rl = createInterface({ input, output, prompt: "> ", terminal: isTerminal });
   let composeBuffer: string[] | undefined;
   let autosaveTimer: ReturnType<typeof setTimeout> | undefined;
+  let lastRelatedResults: RelatedResult[] = [];
 
   const writePrompt = (): void => {
     if (isTerminal) {
@@ -180,13 +181,29 @@ async function main(): Promise<void> {
             const relatedArgs = parseRelatedArgs(parsed.args);
             const lookup = await session.related({ query: relatedArgs.query });
             if (lookup.results.length === 0) {
+              lastRelatedResults = [];
               output.write("No additional related notes found.\n");
               break;
             }
+            lastRelatedResults = lookup.results;
             output.write(formatRelatedResults(lookup.results));
             if (lookup.llmSkippedReason) {
               output.write(`${lookup.llmSkippedReason}\n`);
             }
+            break;
+          }
+          case "note": {
+            const selection = parseRelatedSelectionArgs(parsed.args);
+            if (!selection.index) {
+              output.write("Usage: /note <number> [all|snippet|path|id|reason]\n");
+              break;
+            }
+            const result = lastRelatedResults[selection.index - 1];
+            if (!result) {
+              output.write("No related result at that number. Run /related first, then choose a listed number.\n");
+              break;
+            }
+            output.write(formatRelatedSelection(result, selection.field));
             break;
           }
           case "check": {
@@ -233,22 +250,30 @@ async function main(): Promise<void> {
 }
 
 function formatRelatedResults(results: RelatedResult[]): string {
-  const sections: string[] = [];
-  for (const strength of ["Strong", "Moderate", "Weak"] satisfies RelatedStrength[]) {
-    const grouped = results.filter((result) => result.strength === strength);
-    if (grouped.length === 0) {
-      continue;
-    }
+  return `${results.map((result, index) => {
+    return `${index + 1}. ${result.title}\n   ${result.reasons.join("; ")}`;
+  }).join("\n")}\n`;
+}
 
-    sections.push(`${strength}:`);
-    for (const result of grouped) {
-      sections.push(`[${result.id}] ${result.title}`);
-      sections.push(result.reasons.join("; "));
-      sections.push(result.snippet);
-      sections.push(result.markdownPath);
-    }
+function formatRelatedSelection(result: RelatedResult, field: "all" | "snippet" | "path" | "id" | "reason"): string {
+  switch (field) {
+    case "snippet":
+      return `${result.snippet}\n`;
+    case "path":
+      return `${result.markdownPath}\n`;
+    case "id":
+      return `${result.id}\n`;
+    case "reason":
+      return `${result.reasons.join("; ")}\n`;
+    case "all":
+      return [
+        result.title,
+        result.reasons.join("; "),
+        result.snippet,
+        result.markdownPath,
+        `ID: ${result.id}`
+      ].join("\n") + "\n";
   }
-  return `${sections.join("\n")}\n`;
 }
 
 main().catch((error: unknown) => {
