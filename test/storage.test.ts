@@ -354,6 +354,9 @@ test("search finds notes by topic and entity name", () => {
 
     assert.equal(store.search("Investing").length, 1);
     assert.equal(store.search("Fidelity").length, 1);
+    assert.equal(store.search("entities").length, 0);
+    assert.equal(store.search("dates").length, 0);
+    assert.equal(store.search("type").length, 0);
   } finally {
     store.close();
   }

@@ -179,7 +179,11 @@ export class NoteStore {
          OR raw_content LIKE ?
          OR processed_content LIKE ?
          OR summary LIKE ?
-         OR metadata_json LIKE ?
+         OR EXISTS (
+           SELECT 1 FROM json_tree(notes.metadata_json)
+           WHERE json_tree.type IN ('text', 'integer', 'real', 'true', 'false')
+             AND CAST(json_tree.atom AS TEXT) LIKE ?
+         )
          OR id IN (
            SELECT note_tags.note_id FROM note_tags
            JOIN tags ON tags.id = note_tags.tag_id
