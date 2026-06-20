@@ -15,6 +15,8 @@ pnpm build
 pnpm start
 ```
 
+In the interactive terminal UI, plain `Enter` saves the current note. Use Shift+Enter or Ctrl+Enter to insert a newline when your terminal sends those keys distinctly; Ctrl+J is also supported as a reliable newline fallback.
+
 ## Provider Configuration
 
 The first provider is OpenAI-compatible and uses `fetch`.
