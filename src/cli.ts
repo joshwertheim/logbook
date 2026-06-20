@@ -8,6 +8,8 @@ import { OpenAICompatibleProvider, providerConfigFromEnv, providerStatus, Provid
 import { NoteSession } from "./session.js";
 import { defaultStoragePaths, NoteStore } from "./storage.js";
 
+const autosaveDelayMs = 2000;
+
 async function main(): Promise<void> {
   loadDotEnv();
   const config = providerConfigFromEnv();
@@ -15,37 +17,112 @@ async function main(): Promise<void> {
   const store = new NoteStore(defaultStoragePaths());
   const session = new NoteSession(store, provider);
   const rl = createInterface({ input, output, terminal: input.isTTY && output.isTTY });
+  let composeBuffer: string[] | undefined;
+  let autosaveTimer: ReturnType<typeof setTimeout> | undefined;
+
+  const writePrompt = (): void => {
+    if (input.isTTY) {
+      output.write("> ");
+    }
+  };
+
+  const clearAutosave = (): void => {
+    if (autosaveTimer) {
+      clearTimeout(autosaveTimer);
+      autosaveTimer = undefined;
+    }
+  };
+
+  const runAutosave = (): void => {
+    clearAutosave();
+    try {
+      const saved = session.autosave();
+      if (saved) {
+        output.write(`Autosaved ${saved.title}\n${saved.markdownPath}\n`);
+        writePrompt();
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      output.write(`Autosave failed: ${message}\n`);
+      writePrompt();
+    }
+  };
+
+  const scheduleAutosave = (): void => {
+    clearAutosave();
+    autosaveTimer = setTimeout(runAutosave, autosaveDelayMs);
+  };
 
   output.write("Logbook note session. Type /help for commands.\n");
 
   try {
-    if (input.isTTY) {
-      output.write("> ");
-    }
+    writePrompt();
 
     for await (const line of rl) {
+      if (composeBuffer) {
+        if (line === "/done") {
+          const text = composeBuffer.join("\n");
+          composeBuffer = undefined;
+          if (text.trim()) {
+            await session.append(text);
+            output.write("captured multiline note\n");
+            scheduleAutosave();
+          } else {
+            output.write("No multiline content captured.\n");
+          }
+          writePrompt();
+          continue;
+        }
+        if (line === "/cancel") {
+          composeBuffer = undefined;
+          output.write("Canceled multiline note.\n");
+          writePrompt();
+          continue;
+        }
+
+        composeBuffer.push(line);
+        if (input.isTTY) {
+          output.write("| ");
+        }
+        continue;
+      }
+
       const parsed = parseInput(line);
 
       if (parsed.kind === "input") {
         await session.append(parsed.text);
         output.write("captured\n");
-        if (input.isTTY) {
-          output.write("> ");
-        }
+        scheduleAutosave();
+        writePrompt();
         continue;
       }
 
       if (parsed.name === "quit") {
+        if (autosaveTimer) {
+          runAutosave();
+        }
         break;
       }
 
       try {
         switch (parsed.name) {
+          case "compose":
+            composeBuffer = [];
+            output.write("Compose mode. Finish with /done or discard with /cancel.\n");
+            break;
+          case "done":
+            output.write("Not currently composing. Use /compose to start a multiline note.\n");
+            break;
+          case "cancel":
+            output.write("Not currently composing. Use /compose to start a multiline note.\n");
+            break;
           case "new":
+            clearAutosave();
             await session.newNote();
             output.write("Started a new note.\n");
             break;
           case "save": {
+            clearAutosave();
             const saved = session.save();
             output.write(`Saved ${saved.title}\n${saved.markdownPath}\n`);
             break;
@@ -53,16 +130,19 @@ async function main(): Promise<void> {
           case "process": {
             const processed = await session.process();
             output.write(`${processed}\n`);
+            scheduleAutosave();
             break;
           }
           case "tag": {
             const tags = await session.regenerateTags();
             output.write(`${tags.join(", ")}\n`);
+            scheduleAutosave();
             break;
           }
           case "summary": {
             const summary = await session.summarize();
             output.write(`${summary}\n`);
+            scheduleAutosave();
             break;
           }
           case "search": {
@@ -114,11 +194,10 @@ async function main(): Promise<void> {
         }
       }
 
-      if (input.isTTY) {
-        output.write("> ");
-      }
+      writePrompt();
     }
   } finally {
+    clearAutosave();
     rl.close();
     store.close();
   }

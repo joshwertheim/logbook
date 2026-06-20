@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 import { NoteStore } from "../src/storage.js";
 
@@ -29,6 +30,61 @@ test("saves notes to markdown and sqlite, then searches them", () => {
     assert.equal(results.length, 1);
     assert.equal(results[0]?.title, "Launch Checklist");
     assert.deepEqual(results[0]?.tags, ["launch", "planning"]);
+  } finally {
+    store.close();
+  }
+});
+
+test("updates saved notes in place and records a new version", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "logbook-update-"));
+  const dbPath = path.join(dir, ".logbook", "logbook.sqlite");
+  const store = new NoteStore({
+    notesDir: path.join(dir, "notes"),
+    dbPath
+  });
+
+  try {
+    const saved = store.saveDraft({
+      raw: "Initial launch checklist.",
+      metadata: {
+        title: "Launch Checklist",
+        tags: ["launch", "planning"],
+        dates: [],
+        summary: "Initial launch notes.",
+        type: "meeting"
+      }
+    }, new Date("2026-06-19T12:00:00Z"));
+
+    const updated = store.updateDraft(saved.id, {
+      raw: "Updated roadmap note with budget details.",
+      metadata: {
+        title: "Roadmap Budget",
+        tags: ["budget"],
+        dates: ["tomorrow"],
+        summary: "Updated budget notes.",
+        type: "research"
+      }
+    }, new Date("2026-06-19T12:05:00Z"));
+
+    assert.equal(updated.id, saved.id);
+    assert.equal(updated.markdownPath, saved.markdownPath);
+    assert.equal(fs.readdirSync(path.join(dir, "notes")).length, 1);
+    assert.match(fs.readFileSync(saved.markdownPath, "utf8"), /Updated roadmap note/);
+
+    const oldResults = store.search("launch");
+    const newResults = store.search("budget");
+    assert.equal(oldResults.length, 0);
+    assert.equal(newResults.length, 1);
+    assert.equal(newResults[0]?.title, "Roadmap Budget");
+    assert.deepEqual(newResults[0]?.tags, ["budget"]);
+
+    const db = new DatabaseSync(dbPath);
+    try {
+      const row = db.prepare("SELECT COUNT(*) AS count FROM note_versions WHERE note_id = ?").get(saved.id) as { count: number };
+      assert.equal(row.count, 2);
+    } finally {
+      db.close();
+    }
   } finally {
     store.close();
   }

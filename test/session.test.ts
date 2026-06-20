@@ -76,3 +76,106 @@ test("capture falls back to local metadata when automatic provider metadata fail
     store.close();
   }
 });
+
+test("summary falls back locally when provider request fails", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "logbook-session-summary-fallback-"));
+  const store = new NoteStore({
+    notesDir: path.join(dir, "notes"),
+    dbPath: path.join(dir, ".logbook", "logbook.sqlite")
+  });
+  const session = new NoteSession(store, new FailingProvider());
+
+  try {
+    await session.append("Quota-safe summary today.");
+    const summary = await session.summarize();
+
+    assert.equal(summary, "Quota-safe summary today.");
+  } finally {
+    store.close();
+  }
+});
+
+test("preserves multiline raw content in a single append", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "logbook-session-multiline-"));
+  const store = new NoteStore({
+    notesDir: path.join(dir, "notes"),
+    dbPath: path.join(dir, ".logbook", "logbook.sqlite")
+  });
+  const session = new NoteSession(store);
+
+  try {
+    await session.append("Line one\n\nLine three");
+
+    assert.equal(session.raw, "Line one\n\nLine three");
+  } finally {
+    store.close();
+  }
+});
+
+test("saving the same session updates the current note instead of duplicating it", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "logbook-session-update-"));
+  const store = new NoteStore({
+    notesDir: path.join(dir, "notes"),
+    dbPath: path.join(dir, ".logbook", "logbook.sqlite")
+  });
+  const session = new NoteSession(store);
+
+  try {
+    await session.append("Roadmap idea");
+    const first = session.save();
+    await session.append("Add budget details");
+    const second = session.save();
+
+    assert.equal(second.id, first.id);
+    assert.equal(second.markdownPath, first.markdownPath);
+    assert.equal(fs.readdirSync(path.join(dir, "notes")).length, 1);
+    assert.match(fs.readFileSync(first.markdownPath, "utf8"), /Add budget details/);
+    assert.equal(session.search("budget").length, 1);
+  } finally {
+    store.close();
+  }
+});
+
+test("new note resets save tracking so the next save creates a separate file", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "logbook-session-new-"));
+  const store = new NoteStore({
+    notesDir: path.join(dir, "notes"),
+    dbPath: path.join(dir, ".logbook", "logbook.sqlite")
+  });
+  const session = new NoteSession(store);
+
+  try {
+    await session.append("First note");
+    const first = session.save();
+    await session.newNote();
+    await session.append("Second note");
+    const second = session.save();
+
+    assert.notEqual(second.id, first.id);
+    assert.notEqual(second.markdownPath, first.markdownPath);
+    assert.equal(fs.readdirSync(path.join(dir, "notes")).length, 2);
+  } finally {
+    store.close();
+  }
+});
+
+test("autosave skips unchanged drafts", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "logbook-session-autosave-"));
+  const store = new NoteStore({
+    notesDir: path.join(dir, "notes"),
+    dbPath: path.join(dir, ".logbook", "logbook.sqlite")
+  });
+  const session = new NoteSession(store);
+
+  try {
+    await session.append("Autosave note");
+    const saved = session.autosave();
+    const clean = session.autosave();
+
+    assert.equal(saved?.title, "Autosave Note");
+    assert.equal(clean, undefined);
+    assert.equal(fs.readdirSync(path.join(dir, "notes")).length, 1);
+  } finally {
+    store.close();
+  }
+});

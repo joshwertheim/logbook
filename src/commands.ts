@@ -7,6 +7,9 @@ export type SlashCommandName =
   | "search"
   | "check"
   | "provider"
+  | "compose"
+  | "done"
+  | "cancel"
   | "help"
   | "quit";
 
@@ -32,6 +35,9 @@ const commands = new Set<SlashCommandName>([
   "search",
   "check",
   "provider",
+  "compose",
+  "done",
+  "cancel",
   "help",
   "quit"
 ]);
@@ -63,13 +69,14 @@ export function helpText(): string {
   return [
     "Commands:",
     "/new - start a new note session",
-    "/save - save current note to Markdown and SQLite",
+    "/save - save or update current note to Markdown and SQLite",
     "/process - lightly organize the current note",
     "/tag - regenerate tags/topics",
     "/summary - create a short summary",
     "/search <query> - search stored notes",
     "/check <question> - check saved notes by natural date phrases, such as what happened today",
     "/provider - show active model/provider config",
+    "/compose - start multiline note capture; finish with /done or discard with /cancel",
     "/help - list commands",
     "/quit - exit"
   ].join("\n");

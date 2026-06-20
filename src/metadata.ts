@@ -47,6 +47,10 @@ export async function generateSummary(raw: string, provider: LlmProvider): Promi
   return response.content.trim();
 }
 
+export function fallbackSummary(raw: string): string {
+  return fallbackMetadata(raw).summary;
+}
+
 export async function generateTags(raw: string, provider: LlmProvider): Promise<string[]> {
   const response = await provider.complete({
     responseFormat: "json",

@@ -1,5 +1,5 @@
 import { organizationPrompt, noteTakingSystemPrompt } from "./prompts.js";
-import { generateSummary, generateTags, extractMetadata, fallbackMetadata } from "./metadata.js";
+import { generateSummary, generateTags, extractMetadata, fallbackMetadata, fallbackSummary } from "./metadata.js";
 import type { CheckResult, LlmProvider, NoteDraft, NoteMetadata, SavedNote, SearchResult } from "./types.js";
 import type { DateCheckQuery } from "./check.js";
 import { ProviderConfigError } from "./provider.js";
@@ -9,6 +9,8 @@ export class NoteSession {
   private lines: string[] = [];
   private metadata: NoteMetadata = fallbackMetadata("");
   private processed: string | undefined;
+  private savedNote: SavedNote | undefined;
+  private dirty = false;
 
   constructor(
     private readonly store: NoteStore,
@@ -31,12 +33,15 @@ export class NoteSession {
     this.lines.push(text);
     this.processed = undefined;
     this.metadata = await extractMetadata(this.raw, this.provider);
+    this.dirty = true;
   }
 
   async newNote(): Promise<void> {
     this.lines = [];
     this.processed = undefined;
     this.metadata = fallbackMetadata("");
+    this.savedNote = undefined;
+    this.dirty = false;
   }
 
   async process(): Promise<string> {
@@ -52,6 +57,7 @@ export class NoteSession {
       ]
     });
     this.processed = response.content.trim();
+    this.dirty = true;
     return this.processed;
   }
 
@@ -62,22 +68,47 @@ export class NoteSession {
     }
     const tags = await generateTags(this.raw, this.provider);
     this.metadata = { ...this.metadata, tags };
+    this.dirty = true;
     return tags;
   }
 
   async summarize(): Promise<string> {
     this.ensureRaw();
     if (!this.provider) {
-      throw new ProviderConfigError();
+      const summary = fallbackSummary(this.raw);
+      this.metadata = { ...this.metadata, summary };
+      this.dirty = true;
+      return summary;
     }
-    const summary = await generateSummary(this.raw, this.provider);
+    let summary: string;
+    try {
+      summary = await generateSummary(this.raw, this.provider);
+    } catch {
+      summary = fallbackSummary(this.raw);
+    }
     this.metadata = { ...this.metadata, summary };
+    this.dirty = true;
     return summary;
   }
 
   save(): SavedNote {
     this.ensureRaw();
-    return this.store.saveDraft(this.draft);
+    if (this.savedNote && !this.dirty) {
+      return this.savedNote;
+    }
+    this.savedNote = this.savedNote
+      ? this.store.updateDraft(this.savedNote.id, this.draft)
+      : this.store.saveDraft(this.draft);
+    this.dirty = false;
+    return this.savedNote;
+  }
+
+  autosave(): SavedNote | undefined {
+    this.ensureRaw();
+    if (!this.dirty) {
+      return undefined;
+    }
+    return this.save();
   }
 
   search(query: string): SearchResult[] {

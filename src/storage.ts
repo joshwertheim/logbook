@@ -64,16 +64,8 @@ export class NoteStore {
     );
     const noteId = Number(result.lastInsertRowid);
 
-    this.db.prepare(`
-      INSERT INTO note_versions (note_id, raw_content, processed_content, metadata_json, created_at)
-      VALUES (?, ?, ?, ?, ?)
-    `).run(noteId, draft.raw, draft.processed ?? null, JSON.stringify(draft.metadata), timestamp);
-
-    for (const tag of draft.metadata.tags) {
-      this.db.prepare("INSERT OR IGNORE INTO tags (name) VALUES (?)").run(tag);
-      const tagRow = this.db.prepare("SELECT id FROM tags WHERE name = ?").get(tag) as { id: number };
-      this.db.prepare("INSERT OR IGNORE INTO note_tags (note_id, tag_id) VALUES (?, ?)").run(noteId, tagRow.id);
-    }
+    this.insertVersion(noteId, draft, timestamp);
+    this.replaceTags(noteId, draft.metadata.tags);
 
     return rowToSavedNote({
       id: noteId,
@@ -85,6 +77,52 @@ export class NoteStore {
       summary: draft.metadata.summary,
       note_type: draft.metadata.type,
       created_at: timestamp,
+      updated_at: timestamp
+    });
+  }
+
+  updateDraft(noteId: number, draft: NoteDraft, now = new Date()): SavedNote {
+    const existing = this.db.prepare("SELECT * FROM notes WHERE id = ?").get(noteId) as NoteRow | undefined;
+    if (!existing) {
+      throw new Error(`Cannot update missing note ${noteId}.`);
+    }
+
+    const timestamp = now.toISOString();
+    const slug = slugify(draft.metadata.title);
+    fs.writeFileSync(existing.markdown_path, renderMarkdown(draft), "utf8");
+
+    this.db.prepare(`
+      UPDATE notes
+      SET title = ?,
+          slug = ?,
+          raw_content = ?,
+          processed_content = ?,
+          summary = ?,
+          note_type = ?,
+          updated_at = ?
+      WHERE id = ?
+    `).run(
+      draft.metadata.title,
+      slug,
+      draft.raw,
+      draft.processed ?? null,
+      draft.metadata.summary,
+      draft.metadata.type,
+      timestamp,
+      noteId
+    );
+
+    this.insertVersion(noteId, draft, timestamp);
+    this.replaceTags(noteId, draft.metadata.tags);
+
+    return rowToSavedNote({
+      ...existing,
+      title: draft.metadata.title,
+      slug,
+      raw_content: draft.raw,
+      processed_content: draft.processed ?? null,
+      summary: draft.metadata.summary,
+      note_type: draft.metadata.type,
       updated_at: timestamp
     });
   }
@@ -224,6 +262,22 @@ export class NoteStore {
       ORDER BY tags.name
     `).all(noteId) as Array<{ name: string }>;
     return rows.map((row) => row.name);
+  }
+
+  private insertVersion(noteId: number, draft: NoteDraft, timestamp: string): void {
+    this.db.prepare(`
+      INSERT INTO note_versions (note_id, raw_content, processed_content, metadata_json, created_at)
+      VALUES (?, ?, ?, ?, ?)
+    `).run(noteId, draft.raw, draft.processed ?? null, JSON.stringify(draft.metadata), timestamp);
+  }
+
+  private replaceTags(noteId: number, tags: string[]): void {
+    this.db.prepare("DELETE FROM note_tags WHERE note_id = ?").run(noteId);
+    for (const tag of tags) {
+      this.db.prepare("INSERT OR IGNORE INTO tags (name) VALUES (?)").run(tag);
+      const tagRow = this.db.prepare("SELECT id FROM tags WHERE name = ?").get(tag) as { id: number };
+      this.db.prepare("INSERT OR IGNORE INTO note_tags (note_id, tag_id) VALUES (?, ?)").run(noteId, tagRow.id);
+    }
   }
 }
 

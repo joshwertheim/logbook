@@ -40,14 +40,16 @@ Local OpenAI-compatible servers can also work if they expose `/chat/completions`
 ## Commands
 
 - `/new` starts a new note session.
-- `/save` writes the current note to Markdown and SQLite.
+- `/save` writes or updates the current note to Markdown and SQLite.
 - `/process` lightly organizes the note while preserving the raw capture.
 - `/tag` regenerates tags and topics.
 - `/summary` creates a short summary.
 - `/search <query>` searches stored notes.
 - `/check <question>` checks saved notes by natural date phrases, such as `/check what happened today`.
 - `/provider` shows active provider configuration.
+- `/compose` starts multiline capture mode. Press Return for new lines, then enter `/done` to capture the block or `/cancel` to discard it.
 - `/help` lists commands.
 - `/quit` exits cleanly.
 
 Markdown notes are written to `notes/YYYY-MM-DD-slug.md`. SQLite data is stored in `.logbook/logbook.sqlite`.
+Captured notes autosave after 2 seconds of input inactivity. Autosave creates the note on first save, then updates the same Markdown file and SQLite note while you keep working.
