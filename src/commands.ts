@@ -2,6 +2,7 @@ export type SlashCommandName =
   | "new"
   | "save"
   | "process"
+  | "metadata"
   | "tag"
   | "summary"
   | "search"
@@ -30,6 +31,7 @@ const commands = new Set<SlashCommandName>([
   "new",
   "save",
   "process",
+  "metadata",
   "tag",
   "summary",
   "search",
@@ -71,7 +73,8 @@ export function helpText(): string {
     "/new - start a new note session",
     "/save - save or update current note to Markdown and SQLite",
     "/process - lightly organize the current note",
-    "/tag - regenerate tags/topics",
+    "/metadata - refresh title, summary, tags, topics, entities, dates, and type",
+    "/tag - regenerate tags only; /metadata is preferred for full metadata",
     "/summary - create a short summary",
     "/search <query> - search stored notes",
     "/check <question> - check saved notes by natural date phrases, such as what happened today",

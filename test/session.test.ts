@@ -15,6 +15,8 @@ class MockProvider implements LlmProvider {
         content: JSON.stringify({
           title: "Garden Plan",
           tags: ["garden", "ideas"],
+          topics: ["Garden planning"],
+          entities: [{ name: "Garden beds", type: "project" }],
           dates: ["tomorrow"],
           summary: "Ideas for the garden plan.",
           type: "idea"
@@ -53,6 +55,8 @@ test("captures, extracts metadata, processes, saves, and searches", async () => 
     assert.equal(fs.existsSync(saved.markdownPath), true);
     assert.equal(results.length, 1);
     assert.equal(results[0]?.title, "Garden Plan");
+    assert.deepEqual(results[0]?.topics, ["Garden planning"]);
+    assert.deepEqual(results[0]?.entities, [{ name: "Garden beds", type: "project" }]);
   } finally {
     store.close();
   }
@@ -108,6 +112,29 @@ test("tag regeneration falls back locally when provider request fails", async ()
     const tags = await session.regenerateTags();
 
     assert.deepEqual(tags, ["research", "notes", "sqlite", "indexing", "query", "planning"]);
+  } finally {
+    store.close();
+  }
+});
+
+test("metadata refresh updates the current draft and saved search shape", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "logbook-session-metadata-"));
+  const store = new NoteStore({
+    notesDir: path.join(dir, "notes"),
+    dbPath: path.join(dir, ".logbook", "logbook.sqlite")
+  });
+  const session = new NoteSession(store, new MockProvider());
+
+  try {
+    await session.append("Garden plan tomorrow: buy soil and sketch beds.");
+    const metadata = await session.refreshMetadata();
+    const saved = session.save();
+    const results = session.search("Garden planning");
+
+    assert.deepEqual(metadata.topics, ["Garden planning"]);
+    assert.equal(saved.content, "Garden plan tomorrow: buy soil and sketch beds.");
+    assert.equal(results.length, 1);
+    assert.deepEqual(results[0]?.entities, [{ name: "Garden beds", type: "project" }]);
   } finally {
     store.close();
   }

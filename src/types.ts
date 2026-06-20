@@ -1,8 +1,16 @@
 export type NoteType = "idea" | "journal" | "task list" | "meeting" | "research" | "scratchpad";
+export type EntityType = "organization" | "person" | "place" | "security" | "account" | "project" | "goal" | "event" | "product" | "other";
+
+export interface NoteEntity {
+  name: string;
+  type: EntityType;
+}
 
 export interface NoteMetadata {
   title: string;
   tags: string[];
+  topics: string[];
+  entities: NoteEntity[];
   dates: string[];
   summary: string;
   type: NoteType;
@@ -16,9 +24,13 @@ export interface NoteDraft {
 
 export interface SavedNote {
   id: number;
+  content: string;
   title: string;
   slug: string;
   markdownPath: string;
+  tags: string[];
+  topics: string[];
+  entities: NoteEntity[];
   summary: string;
   noteType: string;
   createdAt: string;
@@ -26,7 +38,6 @@ export interface SavedNote {
 }
 
 export interface SearchResult extends SavedNote {
-  tags: string[];
   snippet: string;
 }
 

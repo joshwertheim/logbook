@@ -43,6 +43,14 @@ test("parses compose mode commands", () => {
   });
 });
 
+test("parses metadata command", () => {
+  assert.deepEqual(parseInput("/metadata"), {
+    kind: "command",
+    name: "metadata",
+    args: ""
+  });
+});
+
 test("treats unknown slash commands as note input", () => {
   assert.deepEqual(parseInput("/unknown value"), {
     kind: "input",

@@ -34,6 +34,8 @@ export function renderFrontmatter(metadata: NoteMetadata): string {
     `type: ${yamlString(metadata.type)}`,
     `summary: ${yamlString(metadata.summary)}`,
     `tags: [${metadata.tags.map(yamlString).join(", ")}]`,
+    `topics: [${metadata.topics.map(yamlString).join(", ")}]`,
+    `entities: [${metadata.entities.map((entity) => JSON.stringify(entity)).join(", ")}]`,
     `dates: [${metadata.dates.map(yamlString).join(", ")}]`,
     "---"
   ].join("\n");

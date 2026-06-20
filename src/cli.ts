@@ -142,6 +142,12 @@ async function main(): Promise<void> {
             scheduleAutosave();
             break;
           }
+          case "metadata": {
+            const metadata = await session.refreshMetadata();
+            output.write(`${metadata.title}\n${metadata.summary}\nTags: ${metadata.tags.join(", ")}\nTopics: ${metadata.topics.join(", ")}\nEntities: ${metadata.entities.map((entity) => `${entity.name} (${entity.type})`).join(", ")}\n`);
+            scheduleAutosave();
+            break;
+          }
           case "tag": {
             const tags = await session.regenerateTags();
             output.write(`${tags.join(", ")}\n`);

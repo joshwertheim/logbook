@@ -3,7 +3,8 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { matchDateCheck, type DateCheckQuery } from "./check.js";
 import { datedMarkdownFilename, renderMarkdown, slugify } from "./markdown.js";
-import type { CheckResult, NoteDraft, SavedNote, SearchResult } from "./types.js";
+import { normalizeMetadata } from "./metadata.js";
+import type { CheckResult, NoteDraft, NoteMetadata, SavedNote, SearchResult } from "./types.js";
 
 export interface StoragePaths {
   notesDir: string;
@@ -19,12 +20,17 @@ interface NoteRow {
   processed_content: string | null;
   summary: string;
   note_type: string;
+  metadata_json: string;
   created_at: string;
   updated_at: string;
 }
 
 interface CheckRow extends NoteRow {
-  metadata_json: string | null;
+  metadata_json: string;
+}
+
+interface ColumnInfo {
+  name: string;
 }
 
 export class NoteStore {
@@ -48,8 +54,8 @@ export class NoteStore {
     fs.writeFileSync(markdownFile, renderMarkdown(draft), "utf8");
 
     const insert = this.db.prepare(`
-      INSERT INTO notes (title, slug, markdown_path, raw_content, processed_content, summary, note_type, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO notes (title, slug, markdown_path, raw_content, processed_content, summary, note_type, metadata_json, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     const result = insert.run(
       draft.metadata.title,
@@ -59,6 +65,7 @@ export class NoteStore {
       draft.processed ?? null,
       draft.metadata.summary,
       draft.metadata.type,
+      JSON.stringify(draft.metadata),
       timestamp,
       timestamp
     );
@@ -76,6 +83,7 @@ export class NoteStore {
       processed_content: draft.processed ?? null,
       summary: draft.metadata.summary,
       note_type: draft.metadata.type,
+      metadata_json: JSON.stringify(draft.metadata),
       created_at: timestamp,
       updated_at: timestamp
     });
@@ -99,6 +107,7 @@ export class NoteStore {
           processed_content = ?,
           summary = ?,
           note_type = ?,
+          metadata_json = ?,
           updated_at = ?
       WHERE id = ?
     `).run(
@@ -108,6 +117,7 @@ export class NoteStore {
       draft.processed ?? null,
       draft.metadata.summary,
       draft.metadata.type,
+      JSON.stringify(draft.metadata),
       timestamp,
       noteId
     );
@@ -123,6 +133,7 @@ export class NoteStore {
       processed_content: draft.processed ?? null,
       summary: draft.metadata.summary,
       note_type: draft.metadata.type,
+      metadata_json: JSON.stringify(draft.metadata),
       updated_at: timestamp
     });
   }
@@ -146,10 +157,19 @@ export class NoteStore {
     const pattern = `%${query}%`;
     const rows = this.db.prepare(`
       SELECT * FROM notes
-      WHERE title LIKE ? OR raw_content LIKE ? OR processed_content LIKE ? OR summary LIKE ?
+      WHERE title LIKE ?
+         OR raw_content LIKE ?
+         OR processed_content LIKE ?
+         OR summary LIKE ?
+         OR metadata_json LIKE ?
+         OR id IN (
+           SELECT note_tags.note_id FROM note_tags
+           JOIN tags ON tags.id = note_tags.tag_id
+           WHERE tags.name LIKE ?
+         )
       ORDER BY updated_at DESC
       LIMIT 25
-    `).all(pattern, pattern, pattern, pattern) as NoteRow[];
+    `).all(pattern, pattern, pattern, pattern, pattern, pattern) as NoteRow[];
 
     return rows.map((row) => ({
       ...rowToSavedNote(row),
@@ -160,13 +180,7 @@ export class NoteStore {
 
   checkByDate(query: DateCheckQuery): CheckResult[] {
     const rows = this.db.prepare(`
-      SELECT notes.*, (
-        SELECT note_versions.metadata_json
-        FROM note_versions
-        WHERE note_versions.note_id = notes.id
-        ORDER BY note_versions.created_at DESC, note_versions.id DESC
-        LIMIT 1
-      ) AS metadata_json
+      SELECT notes.*
       FROM notes
       ORDER BY notes.updated_at DESC
     `).all() as CheckRow[];
@@ -203,6 +217,7 @@ export class NoteStore {
         processed_content TEXT,
         summary TEXT NOT NULL,
         note_type TEXT NOT NULL,
+        metadata_json TEXT NOT NULL DEFAULT '{}',
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
       );
@@ -239,6 +254,45 @@ export class NoteStore {
         created_at TEXT NOT NULL
       );
     `);
+
+    this.ensureNotesMetadataColumn();
+    this.backfillNoteMetadata();
+  }
+
+  private ensureNotesMetadataColumn(): void {
+    const columns = this.db.prepare("PRAGMA table_info(notes)").all() as ColumnInfo[];
+    if (!columns.some((column) => column.name === "metadata_json")) {
+      this.db.exec("ALTER TABLE notes ADD COLUMN metadata_json TEXT NOT NULL DEFAULT '{}'");
+    }
+  }
+
+  private backfillNoteMetadata(): void {
+    const rows = this.db.prepare(`
+      SELECT notes.*, (
+        SELECT note_versions.metadata_json
+        FROM note_versions
+        WHERE note_versions.note_id = notes.id
+        ORDER BY note_versions.created_at DESC, note_versions.id DESC
+        LIMIT 1
+      ) AS version_metadata_json
+      FROM notes
+      WHERE notes.metadata_json IS NULL OR notes.metadata_json = '{}'
+    `).all() as Array<NoteRow & { version_metadata_json: string | null }>;
+
+    for (const row of rows) {
+      const versionMetadata = parseMetadataJson(row.version_metadata_json, row.raw_content);
+      const metadata = normalizeMetadata({
+        ...(versionMetadata ?? {}),
+        title: versionMetadata?.title ?? row.title,
+        summary: versionMetadata?.summary ?? row.summary,
+        type: versionMetadata?.type ?? row.note_type,
+        tags: versionMetadata?.tags ?? this.tagsForNote(row.id),
+        dates: versionMetadata?.dates ?? [],
+        topics: versionMetadata?.topics ?? [],
+        entities: versionMetadata?.entities ?? []
+      }, row.raw_content);
+      this.db.prepare("UPDATE notes SET metadata_json = ? WHERE id = ?").run(JSON.stringify(metadata), row.id);
+    }
   }
 
   private uniqueMarkdownPath(title: string, now: Date): string {
@@ -288,11 +342,25 @@ export function defaultStoragePaths(cwd = process.cwd()): StoragePaths {
 }
 
 function rowToSavedNote(row: NoteRow): SavedNote {
+  const metadata = parseMetadataJson(row.metadata_json, row.raw_content) ?? normalizeMetadata({
+    title: row.title,
+    summary: row.summary,
+    type: row.note_type,
+    tags: [],
+    topics: [],
+    entities: [],
+    dates: []
+  }, row.raw_content);
+
   return {
     id: row.id,
+    content: row.raw_content,
     title: row.title,
     slug: row.slug,
     markdownPath: row.markdown_path,
+    tags: metadata.tags,
+    topics: metadata.topics,
+    entities: metadata.entities,
     summary: row.summary,
     noteType: row.note_type,
     createdAt: row.created_at,
@@ -315,13 +383,17 @@ function metadataDates(metadataJson: string | null): string[] {
     return [];
   }
 
+  return parseMetadataJson(metadataJson)?.dates ?? [];
+}
+
+function parseMetadataJson(metadataJson: string | null, raw = ""): NoteMetadata | undefined {
+  if (!metadataJson) {
+    return undefined;
+  }
+
   try {
-    const metadata = JSON.parse(metadataJson) as { dates?: unknown };
-    if (!Array.isArray(metadata.dates)) {
-      return [];
-    }
-    return metadata.dates.filter((date): date is string => typeof date === "string");
+    return normalizeMetadata(JSON.parse(metadataJson), raw);
   } catch {
-    return [];
+    return undefined;
   }
 }

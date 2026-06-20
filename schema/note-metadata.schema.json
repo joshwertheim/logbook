@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://logbook.local/schema/note-metadata.schema.json",
+  "title": "Logbook Note Metadata",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["title", "summary", "type", "tags", "topics", "entities", "dates"],
+  "properties": {
+    "title": {
+      "type": "string"
+    },
+    "summary": {
+      "type": "string"
+    },
+    "type": {
+      "type": "string",
+      "enum": ["idea", "journal", "task list", "meeting", "research", "scratchpad"]
+    },
+    "tags": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "topics": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "entities": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "type"],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string",
+            "enum": ["organization", "person", "place", "security", "account", "project", "goal", "event", "product", "other"]
+          }
+        }
+      }
+    },
+    "dates": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  }
+}

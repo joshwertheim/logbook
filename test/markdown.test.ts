@@ -16,6 +16,8 @@ test("renders frontmatter and raw capture", () => {
     metadata: {
       title: "Raw Thoughts",
       tags: ["ideas"],
+      topics: ["Planning"],
+      entities: [{ name: "Fidelity", type: "organization" }],
       dates: ["2026-06-19"],
       summary: "A short thought.",
       type: "idea"
@@ -24,5 +26,7 @@ test("renders frontmatter and raw capture", () => {
 
   assert.match(markdown, /title: "Raw Thoughts"/);
   assert.match(markdown, /tags: \["ideas"\]/);
+  assert.match(markdown, /topics: \["Planning"\]/);
+  assert.match(markdown, /entities: \[\{"name":"Fidelity","type":"organization"\}\]/);
   assert.match(markdown, /## Raw Capture\n\nraw thoughts/);
 });

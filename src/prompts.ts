@@ -4,10 +4,14 @@ export const metadataExtractionPrompt = `Extract lightweight metadata for this n
 Return strict JSON with these keys:
 - title: short suggested title
 - tags: 3 to 8 lowercase tags without hash marks
+- topics: 0 to 6 human-readable conceptual categories, preserving normal title casing
+- entities: named things mentioned in the note, preserving casing, as objects with name and type
 - dates: explicit dates or timestamps mentioned by the user
 - summary: one or two short sentences
 - type: one of idea, journal, task list, meeting, research, scratchpad
 
+Entity type must be one of organization, person, place, security, account, project, goal, event, product, other.
+Keep tags and topics separate: tags are lowercase lightweight labels; topics are broader human-readable concepts.
 Do not rewrite the note.`;
 
 export const organizationPrompt = `Lightly organize this note while preserving the user's voice.

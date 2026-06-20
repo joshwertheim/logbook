@@ -56,7 +56,7 @@ You can try cheaper or free OpenRouter models by changing `LLM_MODEL`, but
 validate them against real note flows before relying on them:
 
 ```sh
-/tag
+/metadata
 /summary
 /process
 ```
@@ -66,7 +66,8 @@ validate them against real note flows before relying on them:
 - `/new` starts a new note session.
 - `/save` writes or updates the current note to Markdown and SQLite.
 - `/process` lightly organizes the note while preserving the raw capture.
-- `/tag` regenerates tags and topics.
+- `/metadata` refreshes title, summary, tags, topics, entities, dates, and type.
+- `/tag` regenerates tags only; `/metadata` is preferred for the full metadata contract.
 - `/summary` creates a short summary.
 - `/search <query>` searches stored notes.
 - `/check <question>` checks saved notes by natural date phrases, such as `/check what happened today`.
