@@ -37,6 +37,30 @@ Environment variables already set in your shell take precedence over `.env` valu
 
 Local OpenAI-compatible servers can also work if they expose `/chat/completions`.
 
+### OpenRouter and cheap models
+
+OpenRouter can be used through the same OpenAI-compatible provider settings:
+
+```sh
+LLM_BASE_URL=https://openrouter.ai/api/v1
+LLM_API_KEY=...
+LLM_MODEL=openai/gpt-4.1-nano
+```
+
+For this app, prefer a cheap, reliable small model over the absolute cheapest
+available model. Logbook uses the model for note metadata, tags, summaries, and
+cleanup, so consistent structured output matters more than minimizing every
+fraction of a cent.
+
+You can try cheaper or free OpenRouter models by changing `LLM_MODEL`, but
+validate them against real note flows before relying on them:
+
+```sh
+/tag
+/summary
+/process
+```
+
 ## Commands
 
 - `/new` starts a new note session.
