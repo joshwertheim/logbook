@@ -25,6 +25,16 @@ export LLM_API_KEY="..."
 export LLM_MODEL="gpt-4.1-mini"
 ```
 
+You can also put those values in a root-level `.env` file:
+
+```sh
+LLM_BASE_URL=https://api.openai.com/v1
+LLM_API_KEY=...
+LLM_MODEL=gpt-4.1-mini
+```
+
+Environment variables already set in your shell take precedence over `.env` values.
+
 Local OpenAI-compatible servers can also work if they expose `/chat/completions`.
 
 ## Commands

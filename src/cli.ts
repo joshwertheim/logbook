@@ -2,11 +2,13 @@
 import { createInterface } from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
 import { parseInput, helpText } from "./commands.js";
+import { loadDotEnv } from "./env.js";
 import { OpenAICompatibleProvider, providerConfigFromEnv, providerStatus, ProviderConfigError } from "./provider.js";
 import { NoteSession } from "./session.js";
 import { defaultStoragePaths, NoteStore } from "./storage.js";
 
 async function main(): Promise<void> {
+  loadDotEnv();
   const config = providerConfigFromEnv();
   const provider = new OpenAICompatibleProvider(config);
   const store = new NoteStore(defaultStoragePaths());
