@@ -100,6 +100,15 @@ test("parses metadata command", () => {
   });
 });
 
+test("parses index command", () => {
+  assert.deepEqual(parseInput("/index"), {
+    kind: "command",
+    name: "index",
+    args: ""
+  });
+  assert.match(helpText(), /\/index/);
+});
+
 test("treats unknown slash commands as note input", () => {
   assert.deepEqual(parseInput("/unknown value"), {
     kind: "input",

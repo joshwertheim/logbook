@@ -72,10 +72,22 @@ validate them against real note flows before relying on them:
 - `/search <query>` searches stored notes.
 - `/related [query]` finds saved notes related to the current note or supplied query.
 - `/check <question>` checks saved notes by natural date phrases, such as `/check what happened today`.
+- `/index` indexes Markdown notes into SQLite.
 - `/provider` shows active provider configuration.
 - `/compose` starts multiline capture mode. Press Return for new lines, then enter `/done` to capture the block or `/cancel` to discard it.
 - `/help` lists commands.
 - `/quit` exits cleanly.
 
+## Storage and Indexing
+
 Markdown notes are written to `notes/YYYY-MM-DD-slug.md`. SQLite data is stored in `.logbook/logbook.sqlite`.
+
+SQLite is the CLI's operational source of truth. Markdown files are readable mirrors written on save; manual Markdown edits are not reflected in CLI search, check, or related-note results until you run `/index` or `logbook index`.
+
+Use `/index` inside the interactive CLI, or run this outside the CLI:
+
+```sh
+logbook index
+```
+
 Captured notes autosave after 2 seconds of input inactivity. Autosave creates the note on first save, then updates the same Markdown file and SQLite note while you keep working.

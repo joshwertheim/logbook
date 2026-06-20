@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { clearLine, cursorTo } from "node:readline";
 import { createInterface } from "node:readline/promises";
-import { stdin as input, stdout as output } from "node:process";
+import { argv, stdin as input, stdout as output } from "node:process";
 import { parseCheckQuery } from "./check.js";
 import { parseInput, helpText, parseRelatedArgs, parseRelatedSelectionArgs } from "./commands.js";
 import { loadDotEnv } from "./env.js";
@@ -13,6 +13,16 @@ import type { RelatedResult } from "./types.js";
 const autosaveDelayMs = 2000;
 
 async function main(): Promise<void> {
+  if (argv[2] === "index") {
+    const store = new NoteStore(defaultStoragePaths());
+    try {
+      output.write(formatIndexResult(store.indexMarkdownNotes()));
+    } finally {
+      store.close();
+    }
+    return;
+  }
+
   loadDotEnv();
   const config = providerConfigFromEnv();
   const provider = new OpenAICompatibleProvider(config);
@@ -223,6 +233,11 @@ async function main(): Promise<void> {
             }
             break;
           }
+          case "index": {
+            const result = store.indexMarkdownNotes();
+            output.write(formatIndexResult(result));
+            break;
+          }
           case "provider":
             output.write(`${providerStatus(config)}\n`);
             break;
@@ -247,6 +262,23 @@ async function main(): Promise<void> {
     rl.close();
     store.close();
   }
+}
+
+function formatIndexResult(result: ReturnType<NoteStore["indexMarkdownNotes"]>): string {
+  const lines = [
+    `Indexed ${result.indexed} Markdown note${result.indexed === 1 ? "" : "s"} into SQLite.`,
+    `Inserted: ${result.inserted}; updated: ${result.updated}; unchanged: ${result.unchanged}; skipped: ${result.skipped.length}.`
+  ];
+
+  for (const skipped of result.skipped.slice(0, 5)) {
+    lines.push(`Skipped ${skipped.markdownPath}: ${skipped.reason}`);
+  }
+
+  if (result.skipped.length > 5) {
+    lines.push(`Skipped ${result.skipped.length - 5} more file${result.skipped.length - 5 === 1 ? "" : "s"}.`);
+  }
+
+  return `${lines.join("\n")}\n`;
 }
 
 function formatRelatedResults(results: RelatedResult[]): string {

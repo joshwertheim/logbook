@@ -51,6 +51,14 @@ interface ColumnInfo {
   name: string;
 }
 
+export interface IndexResult {
+  indexed: number;
+  inserted: number;
+  updated: number;
+  unchanged: number;
+  skipped: Array<{ markdownPath: string; reason: string }>;
+}
+
 export class NoteStore {
   private readonly db: DatabaseSync;
 
@@ -169,6 +177,41 @@ export class NoteStore {
       INSERT INTO provider_runs (note_id, provider, model, prompt, response, status, error, created_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `).run(input.noteId ?? null, input.provider, input.model, input.prompt, input.response, input.status, input.error ?? null, now.toISOString());
+  }
+
+  indexMarkdownNotes(): IndexResult {
+    const result: IndexResult = {
+      indexed: 0,
+      inserted: 0,
+      updated: 0,
+      unchanged: 0,
+      skipped: []
+    };
+    const markdownFiles = fs.readdirSync(this.paths.notesDir)
+      .filter((filename) => filename.endsWith(".md"))
+      .sort();
+
+    for (const filename of markdownFiles) {
+      const markdownPath = path.join(this.paths.notesDir, filename);
+      try {
+        const content = fs.readFileSync(markdownPath, "utf8");
+        const parsed = parseMarkdownNote(content);
+        if (!parsed) {
+          result.skipped.push({ markdownPath, reason: "missing Logbook frontmatter or Raw Capture section" });
+          continue;
+        }
+
+        const stat = fs.statSync(markdownPath);
+        const status = this.upsertIndexedMarkdown(markdownPath, parsed, stat.mtime);
+        result.indexed += 1;
+        result[status] += 1;
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : String(error);
+        result.skipped.push({ markdownPath, reason });
+      }
+    }
+
+    return result;
   }
 
   search(query: string): SearchResult[] {
@@ -390,6 +433,74 @@ export class NoteStore {
       const tagRow = this.db.prepare("SELECT id FROM tags WHERE name = ?").get(tag) as { id: number };
       this.db.prepare("INSERT OR IGNORE INTO note_tags (note_id, tag_id) VALUES (?, ?)").run(noteId, tagRow.id);
     }
+  }
+
+  private upsertIndexedMarkdown(markdownPath: string, draft: NoteDraft, fileTime: Date): "inserted" | "updated" | "unchanged" {
+    const existing = this.db.prepare("SELECT * FROM notes WHERE markdown_path = ?").get(markdownPath) as NoteRow | undefined;
+    const slug = slugify(draft.metadata.title);
+    const metadataJson = JSON.stringify(draft.metadata);
+    const timestamp = fileTime.toISOString();
+
+    if (!existing) {
+      const insert = this.db.prepare(`
+        INSERT INTO notes (title, slug, markdown_path, raw_content, processed_content, summary, note_type, metadata_json, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `);
+      const insertResult = insert.run(
+        draft.metadata.title,
+        slug,
+        markdownPath,
+        draft.raw,
+        draft.processed ?? null,
+        draft.metadata.summary,
+        draft.metadata.type,
+        metadataJson,
+        timestamp,
+        timestamp
+      );
+      const noteId = Number(insertResult.lastInsertRowid);
+      this.insertVersion(noteId, draft, timestamp);
+      this.replaceTags(noteId, draft.metadata.tags);
+      return "inserted";
+    }
+
+    if (
+      existing.title === draft.metadata.title
+      && existing.slug === slug
+      && existing.raw_content === draft.raw
+      && existing.processed_content === (draft.processed ?? null)
+      && existing.summary === draft.metadata.summary
+      && existing.note_type === draft.metadata.type
+      && existing.metadata_json === metadataJson
+    ) {
+      return "unchanged";
+    }
+
+    this.db.prepare(`
+      UPDATE notes
+      SET title = ?,
+          slug = ?,
+          raw_content = ?,
+          processed_content = ?,
+          summary = ?,
+          note_type = ?,
+          metadata_json = ?,
+          updated_at = ?
+      WHERE id = ?
+    `).run(
+      draft.metadata.title,
+      slug,
+      draft.raw,
+      draft.processed ?? null,
+      draft.metadata.summary,
+      draft.metadata.type,
+      metadataJson,
+      timestamp,
+      existing.id
+    );
+    this.insertVersion(existing.id, draft, timestamp);
+    this.replaceTags(existing.id, draft.metadata.tags);
+    return "updated";
   }
 }
 
@@ -707,6 +818,74 @@ function parseMetadataJson(metadataJson: string | null, raw = ""): NoteMetadata 
     return normalizeMetadata(JSON.parse(metadataJson), raw);
   } catch {
     return undefined;
+  }
+}
+
+function parseMarkdownNote(content: string): NoteDraft | undefined {
+  const frontmatterMatch = /^---\r?\n([\s\S]*?)\r?\n---\r?\n/.exec(content);
+  if (!frontmatterMatch) {
+    return undefined;
+  }
+
+  const body = content.slice(frontmatterMatch[0].length);
+  const rawHeading = /^## Raw Capture\s*$/m.exec(body);
+  if (!rawHeading) {
+    return undefined;
+  }
+
+  const rawStart = rawHeading.index + rawHeading[0].length;
+  const organizedMatch = /^## Organized Version\s*$/m.exec(body.slice(rawStart));
+  const rawEnd = organizedMatch ? rawStart + organizedMatch.index : body.length;
+  const raw = body.slice(rawStart, rawEnd).trim();
+  if (!raw) {
+    return undefined;
+  }
+
+  const processed = organizedMatch
+    ? body.slice(rawStart + organizedMatch.index + organizedMatch[0].length).trim()
+    : undefined;
+  const frontmatter = parseFrontmatter(frontmatterMatch[1] ?? "");
+  const h1Title = parseMarkdownTitle(body);
+  const metadata = normalizeMetadata({
+    ...frontmatter,
+    ...(h1Title ? { title: h1Title } : {})
+  }, raw);
+
+  return {
+    raw,
+    metadata,
+    ...(processed ? { processed } : {})
+  };
+}
+
+function parseFrontmatter(frontmatter: string): Record<string, unknown> {
+  const values: Record<string, unknown> = {};
+  for (const line of frontmatter.split(/\r?\n/)) {
+    const match = /^([a-z_]+):\s*(.*)$/.exec(line.trim());
+    if (!match) {
+      continue;
+    }
+
+    const key = match[1];
+    if (!key) {
+      continue;
+    }
+    values[key] = parseFrontmatterValue(match[2] ?? "");
+  }
+  return values;
+}
+
+function parseMarkdownTitle(body: string): string | undefined {
+  const match = /^#\s+(.+?)\s*$/m.exec(body);
+  const title = match?.[1]?.trim();
+  return title || undefined;
+}
+
+function parseFrontmatterValue(value: string): unknown {
+  try {
+    return JSON.parse(value);
+  } catch {
+    return value.trim();
   }
 }
 

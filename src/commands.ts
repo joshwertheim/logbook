@@ -9,6 +9,7 @@ export type SlashCommandName =
   | "related"
   | "note"
   | "check"
+  | "index"
   | "provider"
   | "compose"
   | "done"
@@ -40,6 +41,7 @@ const commands = new Set<SlashCommandName>([
   "related",
   "note",
   "check",
+  "index",
   "provider",
   "compose",
   "done",
@@ -84,6 +86,7 @@ export function helpText(): string {
     "/related [query] - find saved notes related to the current note or supplied query",
     "/note <number> [all|snippet|path|id|reason] - show details for a numbered /related result",
     "/check <question> - check saved notes by natural date phrases, such as what happened today",
+    "/index - index Markdown notes into SQLite",
     "/provider - show active model/provider config",
     "/compose - start multiline note capture; finish with /done or discard with /cancel",
     "/help - list commands",

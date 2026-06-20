@@ -109,6 +109,66 @@ test("updates saved notes in place and records a new version", () => {
   }
 });
 
+test("indexes markdown edits into sqlite", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "logbook-index-"));
+  const store = new NoteStore({
+    notesDir: path.join(dir, "notes"),
+    dbPath: path.join(dir, ".logbook", "logbook.sqlite")
+  });
+
+  try {
+    const saved = store.saveDraft({
+      raw: "Initial launch checklist.",
+      metadata: {
+        title: "Launch Checklist",
+        tags: ["launch"],
+        topics: ["Launch planning"],
+        entities: [],
+        dates: [],
+        summary: "Initial launch notes.",
+        type: "meeting"
+      }
+    }, new Date("2026-06-19T12:00:00Z"));
+
+    fs.writeFileSync(saved.markdownPath, [
+      "---",
+      'title: "Launch Checklist"',
+      'type: "research"',
+      'summary: "Updated budget note."',
+      'tags: ["budget"]',
+      'topics: ["Planning"]',
+      'entities: [{"name":"Roadmap","type":"project"}]',
+      'dates: ["2026-06-20"]',
+      "---",
+      "# Budget Review",
+      "",
+      "## Raw Capture",
+      "",
+      "Updated budget review with Roadmap details.",
+      "",
+      "## Organized Version",
+      "",
+      "Budget review organized notes."
+    ].join("\n"), "utf8");
+
+    const result = store.indexMarkdownNotes();
+
+    assert.equal(result.indexed, 1);
+    assert.equal(result.updated, 1);
+    assert.equal(store.search("launch").length, 0);
+
+    const results = store.search("budget");
+    assert.equal(results.length, 1);
+    assert.equal(results[0]?.id, saved.id);
+    assert.equal(results[0]?.title, "Budget Review");
+    assert.deepEqual(results[0]?.tags, ["budget"]);
+    assert.deepEqual(results[0]?.topics, ["Planning"]);
+    assert.deepEqual(results[0]?.entities, [{ name: "Roadmap", type: "project" }]);
+  } finally {
+    store.close();
+  }
+});
+
 test("checks notes by date", () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "logbook-check-"));
   const store = new NoteStore({
