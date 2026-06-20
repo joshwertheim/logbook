@@ -197,10 +197,14 @@ export class NoteStore {
         return [];
       }
 
+      if (!matchesSubjectTerms(row, query.subjectTerms)) {
+        return [];
+      }
+
       return [{
         ...rowToSavedNote(row),
         tags: this.tagsForNote(row.id),
-        snippet: makeSnippet(row.raw_content, query.relativeWord ?? query.targetDate),
+        snippet: makeSnippet(row.raw_content, query.subjectTerms[0] ?? query.relativeWord ?? query.targetDate),
         reasons: match.reasons
       }];
     });
@@ -384,6 +388,26 @@ function metadataDates(metadataJson: string | null): string[] {
   }
 
   return parseMetadataJson(metadataJson)?.dates ?? [];
+}
+
+function matchesSubjectTerms(row: NoteRow, terms: string[]): boolean {
+  if (terms.length === 0) {
+    return true;
+  }
+
+  const metadata = parseMetadataJson(row.metadata_json, row.raw_content);
+  const searchable = [
+    row.title,
+    row.raw_content,
+    row.processed_content ?? "",
+    row.summary,
+    row.note_type,
+    metadata?.tags.join(" ") ?? "",
+    metadata?.topics.join(" ") ?? "",
+    metadata?.entities.map((entity) => entity.name).join(" ") ?? ""
+  ].join(" ").toLowerCase();
+
+  return terms.every((term) => searchable.includes(term));
 }
 
 function parseMetadataJson(metadataJson: string | null, raw = ""): NoteMetadata | undefined {

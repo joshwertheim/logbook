@@ -7,7 +7,18 @@ test("parses today check queries using local date", () => {
     kind: "date",
     label: "today",
     targetDate: "2026-06-20",
-    relativeWord: "today"
+    relativeWord: "today",
+    subjectTerms: []
+  });
+});
+
+test("keeps subject terms from date check queries", () => {
+  assert.deepEqual(parseCheckQuery("did i give haru his medicine today", new Date("2026-06-20T15:30:00")), {
+    kind: "date",
+    label: "today",
+    targetDate: "2026-06-20",
+    relativeWord: "today",
+    subjectTerms: ["haru", "medicine"]
   });
 });
 
@@ -15,7 +26,8 @@ test("parses explicit ISO date check queries", () => {
   assert.deepEqual(parseCheckQuery("what happened on 2026-06-19"), {
     kind: "date",
     label: "2026-06-19",
-    targetDate: "2026-06-19"
+    targetDate: "2026-06-19",
+    subjectTerms: []
   });
 });
 
@@ -24,7 +36,8 @@ test("matches saved notes by created date and metadata dates", () => {
     kind: "date" as const,
     label: "today",
     targetDate: "2026-06-20",
-    relativeWord: "today" as const
+    relativeWord: "today" as const,
+    subjectTerms: []
   };
 
   assert.deepEqual(matchDateCheck({
@@ -41,7 +54,8 @@ test("matches slash-form metadata dates against normalized date queries", () => 
   const query = {
     kind: "date" as const,
     label: "6/20/2026",
-    targetDate: "2026-06-20"
+    targetDate: "2026-06-20",
+    subjectTerms: []
   };
 
   assert.deepEqual(matchDateCheck({

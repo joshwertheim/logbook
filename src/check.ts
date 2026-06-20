@@ -3,6 +3,7 @@ export interface DateCheckQuery {
   label: string;
   targetDate: string;
   relativeWord?: "today" | "yesterday" | "tomorrow";
+  subjectTerms: string[];
 }
 
 export interface UnsupportedCheckQuery {
@@ -34,7 +35,8 @@ export function parseCheckQuery(input: string, now = new Date()): CheckQuery {
       kind: "date",
       label: "today",
       targetDate: formatLocalDate(now),
-      relativeWord: "today"
+      relativeWord: "today",
+      subjectTerms: extractSubjectTerms(normalized)
     };
   }
 
@@ -43,7 +45,8 @@ export function parseCheckQuery(input: string, now = new Date()): CheckQuery {
       kind: "date",
       label: "yesterday",
       targetDate: formatLocalDate(addDays(now, -1)),
-      relativeWord: "yesterday"
+      relativeWord: "yesterday",
+      subjectTerms: extractSubjectTerms(normalized)
     };
   }
 
@@ -52,7 +55,8 @@ export function parseCheckQuery(input: string, now = new Date()): CheckQuery {
       kind: "date",
       label: "tomorrow",
       targetDate: formatLocalDate(addDays(now, 1)),
-      relativeWord: "tomorrow"
+      relativeWord: "tomorrow",
+      subjectTerms: extractSubjectTerms(normalized)
     };
   }
 
@@ -61,7 +65,8 @@ export function parseCheckQuery(input: string, now = new Date()): CheckQuery {
     return {
       kind: "date",
       label: isoDate[1],
-      targetDate: isoDate[1]
+      targetDate: isoDate[1],
+      subjectTerms: extractSubjectTerms(normalized)
     };
   }
 
@@ -73,7 +78,8 @@ export function parseCheckQuery(input: string, now = new Date()): CheckQuery {
     return {
       kind: "date",
       label: `${slashDate[1]}/${slashDate[2]}/${slashDate[3]}`,
-      targetDate: `${year}-${month}-${day}`
+      targetDate: `${year}-${month}-${day}`,
+      subjectTerms: extractSubjectTerms(normalized)
     };
   }
 
@@ -81,6 +87,23 @@ export function parseCheckQuery(input: string, now = new Date()): CheckQuery {
     kind: "unsupported",
     reason: "I can only check date-oriented questions right now, such as /check what happened today or /check 2026-06-20."
   };
+}
+
+export function extractSubjectTerms(input: string): string[] {
+  const terms: string[] = [];
+  const seen = new Set<string>();
+
+  for (const match of input.toLowerCase().matchAll(/\b[a-z][a-z0-9']{2,}\b/g)) {
+    const term = normalizeSubjectTerm(match[0]);
+    if (!term || checkStopWords.has(term) || seen.has(term)) {
+      continue;
+    }
+
+    seen.add(term);
+    terms.push(term);
+  }
+
+  return terms;
 }
 
 export function matchDateCheck(input: CheckMatchInput, query: DateCheckQuery): CheckMatch {
@@ -150,3 +173,65 @@ function localDateFromTimestamp(value: string): string {
   }
   return formatLocalDate(date);
 }
+
+function normalizeSubjectTerm(value: string): string {
+  return value.replace(/'s$/, "").replace(/^'+|'+$/g, "");
+}
+
+const checkStopWords = new Set([
+  "about",
+  "after",
+  "again",
+  "all",
+  "any",
+  "are",
+  "can",
+  "check",
+  "did",
+  "does",
+  "done",
+  "for",
+  "gave",
+  "give",
+  "given",
+  "had",
+  "has",
+  "have",
+  "happen",
+  "happened",
+  "her",
+  "him",
+  "his",
+  "how",
+  "into",
+  "mention",
+  "mentioned",
+  "note",
+  "notes",
+  "our",
+  "out",
+  "she",
+  "show",
+  "that",
+  "the",
+  "their",
+  "them",
+  "then",
+  "there",
+  "these",
+  "they",
+  "this",
+  "today",
+  "tomorrow",
+  "was",
+  "were",
+  "what",
+  "when",
+  "where",
+  "which",
+  "who",
+  "with",
+  "yesterday",
+  "you",
+  "your"
+]);

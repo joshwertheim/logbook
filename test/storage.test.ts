@@ -147,12 +147,62 @@ test("checks notes by date", () => {
       kind: "date",
       label: "today",
       targetDate: "2026-06-20",
-      relativeWord: "today"
+      relativeWord: "today",
+      subjectTerms: []
     });
 
     assert.equal(results.length, 1);
     assert.equal(results[0]?.title, "Launch Prep");
     assert.deepEqual(results[0]?.reasons, ["saved on 2026-06-20", "mentions today"]);
+  } finally {
+    store.close();
+  }
+});
+
+test("checks notes by date and subject terms", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "logbook-check-subject-"));
+  const store = new NoteStore({
+    notesDir: path.join(dir, "notes"),
+    dbPath: path.join(dir, ".logbook", "logbook.sqlite")
+  });
+
+  try {
+    store.saveDraft({
+      raw: "Today I gave Haru his first dose of anti-seizure medicine.",
+      metadata: {
+        title: "Haru Medication",
+        tags: ["haru"],
+        topics: ["medicine"],
+        entities: [{ name: "Haru", type: "other" }],
+        dates: ["today"],
+        summary: "Haru got his medicine.",
+        type: "journal"
+      }
+    }, new Date("2026-06-20T12:00:00Z"));
+
+    store.saveDraft({
+      raw: "Today I watched PAR vs TUR World Cup.",
+      metadata: {
+        title: "World Cup",
+        tags: ["world-cup"],
+        topics: [],
+        entities: [],
+        dates: ["today"],
+        summary: "Watched a World Cup match.",
+        type: "journal"
+      }
+    }, new Date("2026-06-20T13:00:00Z"));
+
+    const results = store.checkByDate({
+      kind: "date",
+      label: "today",
+      targetDate: "2026-06-20",
+      relativeWord: "today",
+      subjectTerms: ["haru", "medicine"]
+    });
+
+    assert.equal(results.length, 1);
+    assert.equal(results[0]?.title, "Haru Medication");
   } finally {
     store.close();
   }
@@ -197,7 +247,8 @@ test("checks notes by date beyond the 100 most recently updated notes", () => {
     const results = store.checkByDate({
       kind: "date",
       label: "2026-06-20",
-      targetDate: "2026-06-20"
+      targetDate: "2026-06-20",
+      subjectTerms: []
     });
 
     assert.equal(results.length, 1);
