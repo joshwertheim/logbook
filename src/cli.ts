@@ -3,7 +3,7 @@ import { clearLine, cursorTo } from "node:readline";
 import { createInterface } from "node:readline/promises";
 import { argv, stdin as input, stdout as output } from "node:process";
 import { parseCheckQuery } from "./check.js";
-import { parseInput, helpText, parseRelatedArgs, parseRelatedSelectionArgs } from "./commands.js";
+import { completeSlashCommand, parseInput, helpText, parseRelatedArgs, parseRelatedSelectionArgs } from "./commands.js";
 import { loadDotEnv } from "./env.js";
 import { OpenAICompatibleProvider, providerConfigFromEnv, providerStatus, ProviderConfigError } from "./provider.js";
 import { NoteSession } from "./session.js";
@@ -29,7 +29,7 @@ async function main(): Promise<void> {
   const store = new NoteStore(defaultStoragePaths());
   const session = new NoteSession(store, provider);
   const isTerminal = input.isTTY && output.isTTY;
-  const rl = createInterface({ input, output, prompt: "> ", terminal: isTerminal });
+  const rl = createInterface({ input, output, prompt: "> ", terminal: isTerminal, completer: completeSlashCommand });
   let composeBuffer: string[] | undefined;
   let autosaveTimer: ReturnType<typeof setTimeout> | undefined;
   let lastRelatedResults: RelatedResult[] = [];

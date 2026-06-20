@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { helpText, parseInput, parseRelatedArgs, parseRelatedSelectionArgs } from "../src/commands.js";
+import { completeSlashCommand, helpText, parseInput, parseRelatedArgs, parseRelatedSelectionArgs, slashCommands } from "../src/commands.js";
 
 test("parses note input", () => {
   assert.deepEqual(parseInput("remember the thing"), {
@@ -114,4 +114,24 @@ test("treats unknown slash commands as note input", () => {
     kind: "input",
     text: "/unknown value"
   });
+});
+
+test("completes slash command prefixes", () => {
+  assert.deepEqual(completeSlashCommand("/rel"), [["/related"], "/rel"]);
+});
+
+test("lists all slash commands for bare slash", () => {
+  assert.deepEqual(
+    completeSlashCommand("/"),
+    [slashCommands.map((command) => `/${command}`), "/"]
+  );
+});
+
+test("does not complete note text or command arguments", () => {
+  assert.deepEqual(completeSlashCommand("remember"), [[], "remember"]);
+  assert.deepEqual(completeSlashCommand("/related har"), [[], "/related har"]);
+});
+
+test("returns no matches for unknown slash prefix", () => {
+  assert.deepEqual(completeSlashCommand("/wat"), [[], "/wat"]);
 });

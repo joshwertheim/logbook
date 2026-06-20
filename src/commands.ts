@@ -30,7 +30,7 @@ export interface NoteInput {
 
 export type ParsedInput = SlashCommand | NoteInput;
 
-const commands = new Set<SlashCommandName>([
+export const slashCommands: SlashCommandName[] = [
   "new",
   "save",
   "process",
@@ -48,7 +48,9 @@ const commands = new Set<SlashCommandName>([
   "cancel",
   "help",
   "quit"
-]);
+];
+
+const commands = new Set<SlashCommandName>(slashCommands);
 
 export function parseInput(input: string): ParsedInput {
   if (!input.startsWith("/")) {
@@ -71,6 +73,18 @@ export function parseInput(input: string): ParsedInput {
     name,
     args: match[2] ?? ""
   };
+}
+
+export function completeSlashCommand(line: string): [string[], string] {
+  if (!line.startsWith("/") || /\s/.test(line)) {
+    return [[], line];
+  }
+
+  const matches = slashCommands
+    .map((command) => `/${command}`)
+    .filter((command) => command.startsWith(line));
+
+  return [matches, line];
 }
 
 export function helpText(): string {
