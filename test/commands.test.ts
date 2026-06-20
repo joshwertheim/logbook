@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { parseInput } from "../src/commands.js";
+import { helpText, parseInput, parseRelatedArgs } from "../src/commands.js";
 
 test("parses note input", () => {
   assert.deepEqual(parseInput("remember the thing"), {
@@ -23,6 +23,31 @@ test("parses check command with natural language args", () => {
     name: "check",
     args: "what happened today"
   });
+});
+
+test("parses related command with optional query", () => {
+  assert.deepEqual(parseInput("/related"), {
+    kind: "command",
+    name: "related",
+    args: ""
+  });
+  assert.deepEqual(parseInput("/related launch plan"), {
+    kind: "command",
+    name: "related",
+    args: "launch plan"
+  });
+});
+
+test("parses related args with room for future flags", () => {
+  assert.deepEqual(parseRelatedArgs("--strict launch plan"), {
+    mode: "balanced",
+    query: "launch plan",
+    flags: ["--strict"]
+  });
+});
+
+test("help text documents related command", () => {
+  assert.match(helpText(), /\/related \[query\]/);
 });
 
 test("parses compose mode commands", () => {

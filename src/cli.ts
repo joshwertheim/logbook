@@ -3,11 +3,12 @@ import { clearLine, cursorTo } from "node:readline";
 import { createInterface } from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
 import { parseCheckQuery } from "./check.js";
-import { parseInput, helpText } from "./commands.js";
+import { parseInput, helpText, parseRelatedArgs } from "./commands.js";
 import { loadDotEnv } from "./env.js";
 import { OpenAICompatibleProvider, providerConfigFromEnv, providerStatus, ProviderConfigError } from "./provider.js";
 import { NoteSession } from "./session.js";
 import { defaultStoragePaths, NoteStore } from "./storage.js";
+import type { RelatedResult, RelatedStrength } from "./types.js";
 
 const autosaveDelayMs = 2000;
 
@@ -175,6 +176,19 @@ async function main(): Promise<void> {
             }
             break;
           }
+          case "related": {
+            const relatedArgs = parseRelatedArgs(parsed.args);
+            const lookup = await session.related({ query: relatedArgs.query });
+            if (lookup.results.length === 0) {
+              output.write("No related notes found.\n");
+              break;
+            }
+            output.write(formatRelatedResults(lookup.results));
+            if (lookup.llmSkippedReason) {
+              output.write(`${lookup.llmSkippedReason}\n`);
+            }
+            break;
+          }
           case "check": {
             const query = parseCheckQuery(parsed.args);
             if (query.kind === "unsupported") {
@@ -216,6 +230,25 @@ async function main(): Promise<void> {
     rl.close();
     store.close();
   }
+}
+
+function formatRelatedResults(results: RelatedResult[]): string {
+  const sections: string[] = [];
+  for (const strength of ["Strong", "Moderate", "Weak"] satisfies RelatedStrength[]) {
+    const grouped = results.filter((result) => result.strength === strength);
+    if (grouped.length === 0) {
+      continue;
+    }
+
+    sections.push(`${strength}:`);
+    for (const result of grouped) {
+      sections.push(`[${result.id}] ${result.title}`);
+      sections.push(result.reasons.join("; "));
+      sections.push(result.snippet);
+      sections.push(result.markdownPath);
+    }
+  }
+  return `${sections.join("\n")}\n`;
 }
 
 main().catch((error: unknown) => {

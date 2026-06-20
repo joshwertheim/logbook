@@ -3,8 +3,8 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { matchDateCheck, type DateCheckQuery } from "./check.js";
 import { datedMarkdownFilename, renderMarkdown, slugify } from "./markdown.js";
-import { normalizeMetadata } from "./metadata.js";
-import type { CheckResult, NoteDraft, NoteMetadata, SavedNote, SearchResult } from "./types.js";
+import { fallbackMetadata, fallbackTags, normalizeMetadata } from "./metadata.js";
+import type { CheckResult, NoteDraft, NoteEntity, NoteMetadata, RelatedResult, RelatedStrength, SavedNote, SearchResult } from "./types.js";
 
 export interface StoragePaths {
   notesDir: string;
@@ -27,6 +27,21 @@ interface NoteRow {
 
 interface CheckRow extends NoteRow {
   metadata_json: string;
+}
+
+interface RelatedSource {
+  raw: string;
+  metadata: NoteMetadata;
+}
+
+interface RelatedProfile {
+  text: string;
+  terms: Set<string>;
+  tags: Set<string>;
+  topics: Set<string>;
+  entities: Map<string, NoteEntity>;
+  dates: Set<string>;
+  noteType: string;
 }
 
 interface ColumnInfo {
@@ -210,6 +225,33 @@ export class NoteStore {
     });
   }
 
+  relatedToDraft(draft: NoteDraft, options: { excludeNoteId?: number } = {}): RelatedResult[] {
+    return this.relatedToSource({
+      raw: draft.raw,
+      metadata: draft.metadata
+    }, options);
+  }
+
+  relatedToQuery(query: string): RelatedResult[] {
+    const metadata = normalizeMetadata({
+      ...fallbackMetadata(query),
+      tags: fallbackTags(query)
+    }, query);
+    return this.relatedToSource({ raw: query, metadata });
+  }
+
+  private relatedToSource(source: RelatedSource, options: { excludeNoteId?: number } = {}): RelatedResult[] {
+    const rows = this.db.prepare("SELECT * FROM notes ORDER BY updated_at DESC").all() as NoteRow[];
+    const profile = profileForSource(source);
+
+    return rows
+      .filter((row) => row.id !== options.excludeNoteId)
+      .map((row) => scoreRelatedRow(row, profile, this.tagsForNote(row.id)))
+      .filter((result): result is RelatedResult => result !== undefined)
+      .sort((left, right) => right.score - left.score || right.updatedAt.localeCompare(left.updatedAt))
+      .slice(0, 12);
+  }
+
   private migrate(): void {
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS notes (
@@ -345,6 +387,162 @@ export function defaultStoragePaths(cwd = process.cwd()): StoragePaths {
   };
 }
 
+function scoreRelatedRow(row: NoteRow, source: RelatedProfile, storedTags: string[]): RelatedResult | undefined {
+  const metadata = parseMetadataJson(row.metadata_json, row.raw_content) ?? normalizeMetadata({
+    title: row.title,
+    summary: row.summary,
+    type: row.note_type,
+    tags: storedTags,
+    topics: [],
+    entities: [],
+    dates: []
+  }, row.raw_content);
+  const candidate = profileForSource({
+    raw: [
+      row.title,
+      row.summary,
+      row.raw_content,
+      row.processed_content ?? ""
+    ].join("\n"),
+    metadata: {
+      ...metadata,
+      tags: metadata.tags.length > 0 ? metadata.tags : storedTags
+    }
+  });
+  const reasons: string[] = [];
+  let score = 0;
+  let snippetTerm = firstTerm(source.terms) ?? "";
+
+  const sharedEntities = intersectMapKeys(source.entities, candidate.entities);
+  if (sharedEntities.length > 0) {
+    score += sharedEntities.length * 30;
+    snippetTerm = sharedEntities[0] ?? snippetTerm;
+    reasons.push(`shared entities: ${sharedEntities.join(", ")}`);
+  } else {
+    const referencedEntities = Array.from(source.entities.keys()).filter((entity) => candidate.text.includes(entity));
+    if (referencedEntities.length > 0) {
+      score += referencedEntities.length * 12;
+      snippetTerm = referencedEntities[0] ?? snippetTerm;
+      reasons.push(`mentions entities: ${referencedEntities.slice(0, 3).join(", ")}`);
+    }
+  }
+
+  const sharedTags = intersectSets(source.tags, candidate.tags);
+  if (sharedTags.length > 0) {
+    score += sharedTags.length * 18;
+    snippetTerm = sharedTags[0] ?? snippetTerm;
+    reasons.push(`shared tags: ${sharedTags.join(", ")}`);
+  }
+
+  const sharedTopics = intersectSets(source.topics, candidate.topics);
+  if (sharedTopics.length > 0) {
+    score += sharedTopics.length * 16;
+    snippetTerm = sharedTopics[0] ?? snippetTerm;
+    reasons.push(`shared topics: ${sharedTopics.join(", ")}`);
+  }
+
+  const sharedDates = intersectSets(source.dates, candidate.dates);
+  if (sharedDates.length > 0) {
+    score += sharedDates.length * 8;
+    snippetTerm = sharedDates[0] ?? snippetTerm;
+    reasons.push(`shared dates: ${sharedDates.join(", ")}`);
+  }
+
+  if (source.noteType !== "scratchpad" && source.noteType === candidate.noteType) {
+    score += 4;
+    reasons.push(`same note type: ${source.noteType}`);
+  }
+
+  const sharedKeywords = intersectSets(source.terms, candidate.terms).slice(0, 8);
+  if (sharedKeywords.length > 0) {
+    const titleMatches = sharedKeywords.filter((term) => normalizeText(row.title).includes(term)).length;
+    const summaryMatches = sharedKeywords.filter((term) => normalizeText(row.summary).includes(term)).length;
+    const contentMatches = sharedKeywords.length;
+    score += Math.min(24, titleMatches * 3 + summaryMatches * 2 + contentMatches);
+    snippetTerm = sharedKeywords[0] ?? snippetTerm;
+    reasons.push(`keyword overlap: ${sharedKeywords.slice(0, 5).join(", ")}`);
+  }
+
+  if (score <= 0) {
+    return undefined;
+  }
+
+  return {
+    ...rowToSavedNote(row),
+    tags: metadata.tags.length > 0 ? metadata.tags : storedTags,
+    snippet: makeSnippet(row.raw_content, snippetTerm),
+    score,
+    strength: strengthForScore(score),
+    reasons
+  };
+}
+
+function profileForSource(source: RelatedSource): RelatedProfile {
+  const metadata = source.metadata;
+  const text = normalizeText([
+    source.raw,
+    metadata.title,
+    metadata.summary,
+    metadata.tags.join(" "),
+    metadata.topics.join(" "),
+    metadata.entities.map((entity) => entity.name).join(" "),
+    metadata.dates.join(" "),
+    metadata.type
+  ].join(" "));
+
+  return {
+    text,
+    terms: termsForText(text),
+    tags: normalizedSet(metadata.tags),
+    topics: normalizedSet(metadata.topics),
+    entities: new Map(metadata.entities.map((entity) => [normalizeText(entity.name), entity])),
+    dates: normalizedSet(metadata.dates),
+    noteType: metadata.type
+  };
+}
+
+function strengthForScore(score: number): RelatedStrength {
+  if (score >= 35) {
+    return "Strong";
+  }
+  if (score >= 18) {
+    return "Moderate";
+  }
+  return "Weak";
+}
+
+function normalizedSet(values: string[]): Set<string> {
+  return new Set(values.map((value) => normalizeText(value)).filter(Boolean));
+}
+
+function normalizeText(value: string): string {
+  return value.toLowerCase().replace(/[^\p{L}\p{N}-]+/gu, " ").trim();
+}
+
+function termsForText(value: string): Set<string> {
+  const terms = new Set<string>();
+  for (const match of value.matchAll(/\b[\p{L}\p{N}][\p{L}\p{N}-]{2,}\b/gu)) {
+    const term = match[0].toLowerCase();
+    if (relatedStopWords.has(term)) {
+      continue;
+    }
+    terms.add(term);
+  }
+  return terms;
+}
+
+function intersectSets(left: Set<string>, right: Set<string>): string[] {
+  return Array.from(left).filter((value) => right.has(value));
+}
+
+function intersectMapKeys(left: Map<string, NoteEntity>, right: Map<string, NoteEntity>): string[] {
+  return Array.from(left.keys()).filter((value) => right.has(value));
+}
+
+function firstTerm(terms: Set<string>): string | undefined {
+  return terms.values().next().value as string | undefined;
+}
+
 function rowToSavedNote(row: NoteRow): SavedNote {
   const metadata = parseMetadataJson(row.metadata_json, row.raw_content) ?? normalizeMetadata({
     title: row.title,
@@ -421,3 +619,30 @@ function parseMetadataJson(metadataJson: string | null, raw = ""): NoteMetadata 
     return undefined;
   }
 }
+
+const relatedStopWords = new Set([
+  "about",
+  "after",
+  "also",
+  "and",
+  "are",
+  "because",
+  "before",
+  "for",
+  "from",
+  "had",
+  "has",
+  "have",
+  "into",
+  "note",
+  "notes",
+  "our",
+  "that",
+  "the",
+  "this",
+  "today",
+  "tomorrow",
+  "was",
+  "were",
+  "with"
+]);

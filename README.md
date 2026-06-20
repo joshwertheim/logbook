@@ -70,6 +70,7 @@ validate them against real note flows before relying on them:
 - `/tag` regenerates tags only; `/metadata` is preferred for the full metadata contract.
 - `/summary` creates a short summary.
 - `/search <query>` searches stored notes.
+- `/related [query]` finds saved notes related to the current note or supplied query.
 - `/check <question>` checks saved notes by natural date phrases, such as `/check what happened today`.
 - `/provider` shows active provider configuration.
 - `/compose` starts multiline capture mode. Press Return for new lines, then enter `/done` to capture the block or `/cancel` to discard it.

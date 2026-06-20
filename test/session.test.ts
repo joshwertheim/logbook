@@ -36,6 +36,28 @@ class FailingProvider implements LlmProvider {
   }
 }
 
+class RerankProvider implements LlmProvider {
+  async complete(request: LlmRequest): Promise<{ content: string }> {
+    const prompt = request.messages.at(-1)?.content ?? "";
+    if (prompt.includes("Rerank related notes")) {
+      const parsed = JSON.parse(prompt) as { candidates: Array<{ id: number }> };
+      return {
+        content: JSON.stringify({
+          results: [
+            {
+              id: parsed.candidates[0]?.id,
+              relevance: 95,
+              strength: "Strong",
+              explanation: "Both notes are about the launch plan."
+            }
+          ]
+        })
+      };
+    }
+    return { content: "{}" };
+  }
+}
+
 test("captures, extracts metadata, processes, saves, and searches", async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "logbook-session-"));
   const store = new NoteStore({
@@ -242,6 +264,152 @@ test("autosave skips unchanged drafts", async () => {
     assert.equal(saved?.title, "Autosave Note");
     assert.equal(clean, undefined);
     assert.equal(fs.readdirSync(path.join(dir, "notes")).length, 1);
+  } finally {
+    store.close();
+  }
+});
+
+test("related lookup for current note excludes the current saved note", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "logbook-session-related-current-"));
+  const store = new NoteStore({
+    notesDir: path.join(dir, "notes"),
+    dbPath: path.join(dir, ".logbook", "logbook.sqlite")
+  });
+  const session = new NoteSession(store);
+
+  try {
+    await session.append("Acme launch plan.");
+    const current = session.save();
+    store.saveDraft({
+      raw: "Follow-up Acme launch checklist.",
+      metadata: {
+        title: "Launch Follow-up",
+        tags: ["launch"],
+        topics: [],
+        entities: [],
+        dates: [],
+        summary: "Follow-up checklist.",
+        type: "task list"
+      }
+    }, new Date("2026-06-20T12:00:00Z"));
+
+    const lookup = await session.related();
+
+    assert.equal(lookup.results.length, 1);
+    assert.notEqual(lookup.results[0]?.id, current.id);
+    assert.equal(lookup.results[0]?.title, "Launch Follow-up");
+  } finally {
+    store.close();
+  }
+});
+
+test("related lookup supports free query without current note content", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "logbook-session-related-query-"));
+  const store = new NoteStore({
+    notesDir: path.join(dir, "notes"),
+    dbPath: path.join(dir, ".logbook", "logbook.sqlite")
+  });
+  const session = new NoteSession(store);
+
+  try {
+    store.saveDraft({
+      raw: "Launch roadmap for mobile beta.",
+      metadata: {
+        title: "Mobile Launch",
+        tags: ["launch"],
+        topics: ["Mobile beta"],
+        entities: [],
+        dates: [],
+        summary: "Mobile launch roadmap.",
+        type: "idea"
+      }
+    }, new Date("2026-06-20T12:00:00Z"));
+
+    const lookup = await session.related({ query: "mobile beta launch" });
+
+    assert.equal(lookup.results.length, 1);
+    assert.equal(lookup.results[0]?.title, "Mobile Launch");
+  } finally {
+    store.close();
+  }
+});
+
+test("related lookup without query requires current note content", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "logbook-session-related-empty-"));
+  const store = new NoteStore({
+    notesDir: path.join(dir, "notes"),
+    dbPath: path.join(dir, ".logbook", "logbook.sqlite")
+  });
+  const session = new NoteSession(store);
+
+  try {
+    await assert.rejects(
+      session.related(),
+      /There is no note content yet\./
+    );
+  } finally {
+    store.close();
+  }
+});
+
+test("related lookup uses provider reranking when available", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "logbook-session-related-rerank-"));
+  const store = new NoteStore({
+    notesDir: path.join(dir, "notes"),
+    dbPath: path.join(dir, ".logbook", "logbook.sqlite")
+  });
+  const session = new NoteSession(store, new RerankProvider());
+
+  try {
+    store.saveDraft({
+      raw: "Launch roadmap for mobile beta.",
+      metadata: {
+        title: "Mobile Launch",
+        tags: ["launch"],
+        topics: ["Mobile beta"],
+        entities: [],
+        dates: [],
+        summary: "Mobile launch roadmap.",
+        type: "idea"
+      }
+    }, new Date("2026-06-20T12:00:00Z"));
+
+    const lookup = await session.related({ query: "mobile beta launch" });
+
+    assert.equal(lookup.llmSkippedReason, undefined);
+    assert.equal(lookup.results[0]?.score, 95);
+    assert.deepEqual(lookup.results[0]?.reasons, ["Both notes are about the launch plan."]);
+  } finally {
+    store.close();
+  }
+});
+
+test("related lookup falls back when provider reranking fails", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "logbook-session-related-fallback-"));
+  const store = new NoteStore({
+    notesDir: path.join(dir, "notes"),
+    dbPath: path.join(dir, ".logbook", "logbook.sqlite")
+  });
+  const session = new NoteSession(store, new FailingProvider());
+
+  try {
+    store.saveDraft({
+      raw: "Launch roadmap for mobile beta.",
+      metadata: {
+        title: "Mobile Launch",
+        tags: ["launch"],
+        topics: ["Mobile beta"],
+        entities: [],
+        dates: [],
+        summary: "Mobile launch roadmap.",
+        type: "idea"
+      }
+    }, new Date("2026-06-20T12:00:00Z"));
+
+    const lookup = await session.related({ query: "mobile beta launch" });
+
+    assert.equal(lookup.results.length, 1);
+    assert.match(lookup.llmSkippedReason ?? "", /LLM reranking skipped/);
   } finally {
     store.close();
   }

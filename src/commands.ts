@@ -6,6 +6,7 @@ export type SlashCommandName =
   | "tag"
   | "summary"
   | "search"
+  | "related"
   | "check"
   | "provider"
   | "compose"
@@ -35,6 +36,7 @@ const commands = new Set<SlashCommandName>([
   "tag",
   "summary",
   "search",
+  "related",
   "check",
   "provider",
   "compose",
@@ -77,10 +79,37 @@ export function helpText(): string {
     "/tag - regenerate tags only; /metadata is preferred for full metadata",
     "/summary - create a short summary",
     "/search <query> - search stored notes",
+    "/related [query] - find saved notes related to the current note or supplied query",
     "/check <question> - check saved notes by natural date phrases, such as what happened today",
     "/provider - show active model/provider config",
     "/compose - start multiline note capture; finish with /done or discard with /cancel",
     "/help - list commands",
     "/quit - exit"
   ].join("\n");
+}
+
+export interface RelatedCommandArgs {
+  mode: "balanced";
+  query: string;
+  flags: string[];
+}
+
+export function parseRelatedArgs(args: string): RelatedCommandArgs {
+  const tokens = args.match(/"[^"]+"|'[^']+'|\S+/g) ?? [];
+  const flags: string[] = [];
+  const queryParts: string[] = [];
+
+  for (const token of tokens) {
+    if (token.startsWith("--")) {
+      flags.push(token);
+      continue;
+    }
+    queryParts.push(token.replace(/^(['"])(.*)\1$/, "$2"));
+  }
+
+  return {
+    mode: "balanced",
+    query: queryParts.join(" ").trim(),
+    flags
+  };
 }

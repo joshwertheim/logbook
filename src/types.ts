@@ -45,6 +45,19 @@ export interface CheckResult extends SearchResult {
   reasons: string[];
 }
 
+export type RelatedStrength = "Strong" | "Moderate" | "Weak";
+
+export interface RelatedResult extends SearchResult {
+  score: number;
+  strength: RelatedStrength;
+  reasons: string[];
+}
+
+export interface RelatedLookupResult {
+  results: RelatedResult[];
+  llmSkippedReason?: string;
+}
+
 export interface ChatMessage {
   role: "system" | "user" | "assistant";
   content: string;

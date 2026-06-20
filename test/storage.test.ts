@@ -358,3 +358,107 @@ test("search finds notes by topic and entity name", () => {
     store.close();
   }
 });
+
+test("finds related notes by shared entities, tags, topics, dates, and keywords", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "logbook-related-"));
+  const store = new NoteStore({
+    notesDir: path.join(dir, "notes"),
+    dbPath: path.join(dir, ".logbook", "logbook.sqlite")
+  });
+
+  try {
+    store.saveDraft({
+      raw: "Launch plan with Acme on 2026-07-01 covers beta onboarding.",
+      metadata: {
+        title: "Acme Launch Plan",
+        tags: ["launch", "beta"],
+        topics: ["Product launch"],
+        entities: [{ name: "Acme", type: "organization" }],
+        dates: ["2026-07-01"],
+        summary: "Acme launch planning.",
+        type: "meeting"
+      }
+    }, new Date("2026-06-20T12:00:00Z"));
+
+    store.saveDraft({
+      raw: "A launch checklist for customer onboarding and release notes.",
+      metadata: {
+        title: "Launch Checklist",
+        tags: ["launch"],
+        topics: ["Release planning"],
+        entities: [],
+        dates: [],
+        summary: "Checklist for launch.",
+        type: "task list"
+      }
+    }, new Date("2026-06-20T13:00:00Z"));
+
+    store.saveDraft({
+      raw: "Unrelated grocery list.",
+      metadata: {
+        title: "Groceries",
+        tags: ["errands"],
+        topics: [],
+        entities: [],
+        dates: [],
+        summary: "Buy vegetables.",
+        type: "scratchpad"
+      }
+    }, new Date("2026-06-20T14:00:00Z"));
+
+    const results = store.relatedToDraft({
+      raw: "Acme beta launch meeting on 2026-07-01.",
+      metadata: {
+        title: "Acme Beta Launch",
+        tags: ["launch"],
+        topics: ["Product launch"],
+        entities: [{ name: "Acme", type: "organization" }],
+        dates: ["2026-07-01"],
+        summary: "Follow up on Acme beta launch.",
+        type: "meeting"
+      }
+    });
+
+    assert.equal(results.length, 2);
+    assert.equal(results[0]?.title, "Acme Launch Plan");
+    assert.equal(results[0]?.strength, "Strong");
+    assert.match(results[0]?.reasons.join(" "), /shared entities: acme/);
+    assert.match(results[0]?.reasons.join(" "), /shared tags: launch/);
+    assert.match(results[0]?.reasons.join(" "), /shared topics: product launch/);
+    assert.match(results[0]?.reasons.join(" "), /shared dates: 2026-07-01/);
+    assert.equal(results[1]?.title, "Launch Checklist");
+  } finally {
+    store.close();
+  }
+});
+
+test("finds related notes for free query keyword lookup", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "logbook-related-query-"));
+  const store = new NoteStore({
+    notesDir: path.join(dir, "notes"),
+    dbPath: path.join(dir, ".logbook", "logbook.sqlite")
+  });
+
+  try {
+    store.saveDraft({
+      raw: "Roadmap launch plan for mobile beta.",
+      metadata: {
+        title: "Mobile Launch",
+        tags: ["roadmap"],
+        topics: ["Mobile beta"],
+        entities: [],
+        dates: [],
+        summary: "Plan mobile beta launch.",
+        type: "idea"
+      }
+    }, new Date("2026-06-20T12:00:00Z"));
+
+    const results = store.relatedToQuery("mobile beta launch plan");
+
+    assert.equal(results.length, 1);
+    assert.equal(results[0]?.title, "Mobile Launch");
+    assert.match(results[0]?.reasons.join(" "), /keyword overlap/);
+  } finally {
+    store.close();
+  }
+});
