@@ -66,7 +66,7 @@ async function runInteractiveMode(session: NoteSession, config: ReturnType<typeo
 
   let buffer = "";
   let pending = Promise.resolve();
-  let ignoreSubmitUntil = 0;
+  let ignoreNextSubmit = false;
 
   await new Promise<void>((resolve) => {
     const onKeypress = (sequence: string, key: Key): void => {
@@ -81,25 +81,29 @@ async function runInteractiveMode(session: NoteSession, config: ReturnType<typeo
             break;
           case "clear":
             buffer = "";
+            ignoreNextSubmit = false;
             output.write("\n> ");
             break;
           case "backspace":
             if (buffer.length > 0) {
               buffer = buffer.slice(0, -1);
+              ignoreNextSubmit = false;
               output.write("\b \b");
             }
             break;
           case "newline":
             buffer += "\n";
-            ignoreSubmitUntil = Date.now() + 100;
+            ignoreNextSubmit = true;
             output.write("\n  ");
             break;
           case "text":
             buffer += action.value;
+            ignoreNextSubmit = false;
             output.write(action.value);
             break;
           case "submit":
-            if (Date.now() < ignoreSubmitUntil) {
+            if (ignoreNextSubmit) {
+              ignoreNextSubmit = false;
               break;
             }
             output.write("\n");
