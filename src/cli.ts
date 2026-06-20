@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { clearLine, cursorTo } from "node:readline";
 import { createInterface } from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
 import { parseCheckQuery } from "./check.js";
@@ -16,14 +17,28 @@ async function main(): Promise<void> {
   const provider = new OpenAICompatibleProvider(config);
   const store = new NoteStore(defaultStoragePaths());
   const session = new NoteSession(store, provider);
-  const rl = createInterface({ input, output, terminal: input.isTTY && output.isTTY });
+  const isTerminal = input.isTTY && output.isTTY;
+  const rl = createInterface({ input, output, prompt: "> ", terminal: isTerminal });
   let composeBuffer: string[] | undefined;
   let autosaveTimer: ReturnType<typeof setTimeout> | undefined;
 
   const writePrompt = (): void => {
-    if (input.isTTY) {
-      output.write("> ");
+    if (isTerminal) {
+      rl.setPrompt(composeBuffer ? "| " : "> ");
+      rl.prompt();
     }
+  };
+
+  const writeNotice = (message: string): void => {
+    if (!isTerminal) {
+      output.write(`${message}\n`);
+      return;
+    }
+
+    clearLine(output, 0);
+    cursorTo(output, 0);
+    output.write(`${message}\n`);
+    rl.prompt(true);
   };
 
   const clearAutosave = (): void => {
@@ -36,15 +51,10 @@ async function main(): Promise<void> {
   const runAutosave = (): void => {
     clearAutosave();
     try {
-      const saved = session.autosave();
-      if (saved) {
-        output.write(`Autosaved ${saved.title}\n${saved.markdownPath}\n`);
-        writePrompt();
-      }
+      session.autosave();
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      output.write(`Autosave failed: ${message}\n`);
-      writePrompt();
+      writeNotice(`Autosave failed: ${message}`);
     }
   };
 
@@ -56,6 +66,7 @@ async function main(): Promise<void> {
   output.write("Logbook note session. Type /help for commands.\n");
 
   try {
+    await new Promise<void>((resolve) => setImmediate(resolve));
     writePrompt();
 
     for await (const line of rl) {
@@ -81,9 +92,7 @@ async function main(): Promise<void> {
         }
 
         composeBuffer.push(line);
-        if (input.isTTY) {
-          output.write("| ");
-        }
+        writePrompt();
         continue;
       }
 
