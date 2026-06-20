@@ -180,7 +180,7 @@ async function main(): Promise<void> {
             const relatedArgs = parseRelatedArgs(parsed.args);
             const lookup = await session.related({ query: relatedArgs.query });
             if (lookup.results.length === 0) {
-              output.write("No related notes found.\n");
+              output.write("No additional related notes found.\n");
               break;
             }
             output.write(formatRelatedResults(lookup.results));

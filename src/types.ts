@@ -51,6 +51,7 @@ export interface RelatedResult extends SearchResult {
   score: number;
   strength: RelatedStrength;
   reasons: string[];
+  deterministicReasons?: string[];
 }
 
 export interface RelatedLookupResult {

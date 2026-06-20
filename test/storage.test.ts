@@ -462,3 +462,61 @@ test("finds related notes for free query keyword lookup", () => {
     store.close();
   }
 });
+
+test("single-token related query prioritizes literal subject evidence over generated tags", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "logbook-related-literal-query-"));
+  const store = new NoteStore({
+    notesDir: path.join(dir, "notes"),
+    dbPath: path.join(dir, ".logbook", "logbook.sqlite")
+  });
+
+  try {
+    store.saveDraft({
+      raw: "today I gave haru his first dose of anti-seizure medicine.",
+      metadata: {
+        title: "Haru Medication",
+        tags: ["pet", "medication"],
+        topics: ["Pet Care"],
+        entities: [{ name: "Haru", type: "other" }],
+        dates: [],
+        summary: "Haru got his medicine.",
+        type: "journal"
+      }
+    }, new Date("2026-06-20T12:00:00Z"));
+    store.saveDraft({
+      raw: "yesterday was distressing. haru sure is a lot of work!",
+      metadata: {
+        title: "Work and Well-being",
+        tags: ["work", "stress", "haru"],
+        topics: ["Work Life"],
+        entities: [],
+        dates: [],
+        summary: "A distressing work day that mentions Haru.",
+        type: "journal"
+      }
+    }, new Date("2026-06-20T12:01:00Z"));
+    store.saveDraft({
+      raw: "testing another note",
+      metadata: {
+        title: "Testing Another Note",
+        tags: [],
+        topics: [],
+        entities: [],
+        dates: [],
+        summary: "testing another note",
+        type: "scratchpad"
+      }
+    }, new Date("2026-06-20T12:02:00Z"));
+
+    const results = store.relatedToQuery("haru");
+
+    assert.deepEqual(results.map((result) => result.title), [
+      "Haru Medication",
+      "Work and Well-being"
+    ]);
+    assert.match(results[0]?.reasons.join(" ") ?? "", /literal entity match/);
+    assert.doesNotMatch(results.map((result) => result.reasons.join(" ")).join(" "), /scratchpad/);
+  } finally {
+    store.close();
+  }
+});

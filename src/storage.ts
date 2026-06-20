@@ -32,6 +32,8 @@ interface CheckRow extends NoteRow {
 interface RelatedSource {
   raw: string;
   metadata: NoteMetadata;
+  literalTerms?: Set<string>;
+  includeMetadataType?: boolean;
 }
 
 interface RelatedProfile {
@@ -42,6 +44,7 @@ interface RelatedProfile {
   entities: Map<string, NoteEntity>;
   dates: Set<string>;
   noteType: string;
+  literalTerms: Set<string>;
 }
 
 interface ColumnInfo {
@@ -233,11 +236,17 @@ export class NoteStore {
   }
 
   relatedToQuery(query: string): RelatedResult[] {
+    const literalTerms = literalTermsForQuery(query);
     const metadata = normalizeMetadata({
       ...fallbackMetadata(query),
-      tags: fallbackTags(query)
+      tags: literalTerms.size > 0 ? [] : fallbackTags(query)
     }, query);
-    return this.relatedToSource({ raw: query, metadata });
+    return this.relatedToSource({
+      raw: query,
+      metadata,
+      literalTerms,
+      includeMetadataType: false
+    });
   }
 
   private relatedToSource(source: RelatedSource, options: { excludeNoteId?: number } = {}): RelatedResult[] {
@@ -413,6 +422,15 @@ function scoreRelatedRow(row: NoteRow, source: RelatedProfile, storedTags: strin
   let score = 0;
   let snippetTerm = firstTerm(source.terms) ?? "";
 
+  if (source.literalTerms.size > 0) {
+    const literalMatch = scoreLiteralMatches(row, metadata, source.literalTerms);
+    score += literalMatch.score;
+    if (literalMatch.snippetTerm) {
+      snippetTerm = literalMatch.snippetTerm;
+    }
+    reasons.push(...literalMatch.reasons);
+  }
+
   const sharedEntities = intersectMapKeys(source.entities, candidate.entities);
   if (sharedEntities.length > 0) {
     score += sharedEntities.length * 30;
@@ -487,7 +505,7 @@ function profileForSource(source: RelatedSource): RelatedProfile {
     metadata.topics.join(" "),
     metadata.entities.map((entity) => entity.name).join(" "),
     metadata.dates.join(" "),
-    metadata.type
+    source.includeMetadataType === false ? "" : metadata.type
   ].join(" "));
 
   return {
@@ -497,8 +515,76 @@ function profileForSource(source: RelatedSource): RelatedProfile {
     topics: normalizedSet(metadata.topics),
     entities: new Map(metadata.entities.map((entity) => [normalizeText(entity.name), entity])),
     dates: normalizedSet(metadata.dates),
-    noteType: metadata.type
+    noteType: metadata.type,
+    literalTerms: source.literalTerms ?? new Set()
   };
+}
+
+function scoreLiteralMatches(row: NoteRow, metadata: NoteMetadata, terms: Set<string>): { score: number; reasons: string[]; snippetTerm?: string } {
+  const reasons: string[] = [];
+  let score = 0;
+  let snippetTerm: string | undefined;
+  const title = normalizeText(row.title);
+  const filename = normalizeText(path.basename(row.markdown_path, path.extname(row.markdown_path)));
+  const slug = normalizeText(row.slug);
+  const summary = normalizeText(row.summary);
+  const raw = normalizeText(row.raw_content);
+  const firstLines = normalizeText(row.raw_content.split(/\r?\n/).slice(0, 6).join("\n"));
+  const tags = normalizedSet(metadata.tags);
+  const entityNames = new Set(metadata.entities.map((entity) => normalizeText(entity.name)));
+
+  const matchedEntities = intersectSets(terms, entityNames);
+  if (matchedEntities.length > 0) {
+    score += matchedEntities.length * 40;
+    snippetTerm = matchedEntities[0] ?? snippetTerm;
+    reasons.push(`literal entity match: ${matchedEntities.join(", ")}`);
+  }
+
+  const matchedTitle = termsInText(terms, title);
+  if (matchedTitle.length > 0) {
+    score += matchedTitle.length * 28;
+    snippetTerm = matchedTitle[0] ?? snippetTerm;
+    reasons.push(`literal title match: ${matchedTitle.join(", ")}`);
+  }
+
+  const matchedFilename = Array.from(terms).filter((term) => slug.includes(term) || filename.includes(term));
+  if (matchedFilename.length > 0) {
+    score += matchedFilename.length * 24;
+    snippetTerm = matchedFilename[0] ?? snippetTerm;
+    reasons.push(`literal filename match: ${matchedFilename.join(", ")}`);
+  }
+
+  const matchedFirstLines = termsInText(terms, firstLines);
+  if (matchedFirstLines.length > 0) {
+    score += matchedFirstLines.length * 16;
+    snippetTerm = matchedFirstLines[0] ?? snippetTerm;
+    reasons.push(`literal early content match: ${matchedFirstLines.join(", ")}`);
+  }
+
+  const matchedSummary = termsInText(terms, summary);
+  if (matchedSummary.length > 0) {
+    score += matchedSummary.length * 8;
+    snippetTerm = matchedSummary[0] ?? snippetTerm;
+    reasons.push(`literal summary match: ${matchedSummary.join(", ")}`);
+  }
+
+  const matchedTags = intersectSets(terms, tags).filter((term) => raw.includes(term) || summary.includes(term) || title.includes(term));
+  if (matchedTags.length > 0) {
+    score += matchedTags.length * 4;
+    snippetTerm = matchedTags[0] ?? snippetTerm;
+    reasons.push(`confirmed tag match: ${matchedTags.join(", ")}`);
+  }
+
+  return snippetTerm ? { score, reasons, snippetTerm } : { score, reasons };
+}
+
+function literalTermsForQuery(query: string): Set<string> {
+  const terms = termsForText(normalizeText(query));
+  return terms.size === 1 ? terms : new Set();
+}
+
+function termsInText(terms: Set<string>, text: string): string[] {
+  return Array.from(terms).filter((term) => text.includes(term));
 }
 
 function strengthForScore(score: number): RelatedStrength {

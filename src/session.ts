@@ -7,7 +7,10 @@ import { NoteStore } from "./storage.js";
 
 export interface RelatedRequest {
   query?: string;
+  visibility?: RelatedVisibilityMode;
 }
+
+type RelatedVisibilityMode = "balanced";
 
 export class NoteSession {
   private lines: string[] = [];
@@ -149,20 +152,22 @@ export class NoteSession {
       return { results: [] };
     }
 
+    const visibleCandidates = filterVisibleRelatedResults(candidates, request.visibility);
+
     if (!this.provider) {
       return {
-        results: candidates.slice(0, 10),
+        results: visibleCandidates.slice(0, 10),
         llmSkippedReason: "LLM reranking skipped: LLM provider is not configured."
       };
     }
 
     try {
       const reranked = await rerankRelatedResults(candidates, query || this.raw, this.provider);
-      return { results: reranked.slice(0, 10) };
+      return { results: filterVisibleRelatedResults(reranked, request.visibility).slice(0, 10) };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       return {
-        results: candidates.slice(0, 10),
+        results: visibleCandidates.slice(0, 10),
         llmSkippedReason: `LLM reranking skipped: ${message}`
       };
     }
@@ -194,7 +199,7 @@ async function rerankRelatedResults(candidates: RelatedResult[], source: string,
       {
         role: "user",
         content: JSON.stringify({
-          task: "Rerank related notes for the source text. Return {\"results\":[{\"id\":number,\"relevance\":number,\"strength\":\"Strong|Moderate|Weak\",\"explanation\":\"short reason\"}]}",
+          task: "Rerank related notes for the source text. Omit unrelated candidates entirely. Return {\"results\":[{\"id\":number,\"relevance\":number,\"strength\":\"Strong|Moderate|Weak\",\"explanation\":\"short reason\"}]}",
           source,
           candidates: candidates.map((candidate) => ({
             id: candidate.id,
@@ -225,18 +230,14 @@ async function rerankRelatedResults(candidates: RelatedResult[], source: string,
       continue;
     }
     seen.add(item.id);
+    const strength = capStrength(item.strength, candidate.strength);
     reranked.push({
       ...candidate,
       score: item.relevance,
-      strength: item.strength,
-      reasons: [item.explanation]
+      strength,
+      reasons: [item.explanation],
+      deterministicReasons: candidate.reasons
     });
-  }
-
-  for (const candidate of candidates) {
-    if (!seen.has(candidate.id)) {
-      reranked.push(candidate);
-    }
   }
 
   return reranked.sort((left, right) => right.score - left.score || right.updatedAt.localeCompare(left.updatedAt));
@@ -256,11 +257,80 @@ function parseRerankResponse(content: string): Array<{ id: number; relevance: nu
     const relevance = typeof item.relevance === "number" && Number.isFinite(item.relevance)
       ? item.relevance
       : 0;
+    if (isUnrelatedRerankItem(item)) {
+      return [];
+    }
+
     const strength = normalizeStrength(item.strength, relevance);
     const explanation = typeof item.explanation === "string" && item.explanation.trim()
       ? item.explanation.trim()
       : "Related by deterministic signals.";
     return [{ id: item.id, relevance, strength, explanation }];
+  });
+}
+
+function filterVisibleRelatedResults(results: RelatedResult[], mode: RelatedVisibilityMode = "balanced"): RelatedResult[] {
+  switch (mode) {
+    case "balanced":
+      return results.filter(isVisibleByDefault);
+  }
+}
+
+function isVisibleByDefault(result: RelatedResult): boolean {
+  if (hasUnrelatedExplanation(result.reasons)) {
+    return false;
+  }
+  if (result.strength === "Strong" || result.strength === "Moderate") {
+    return true;
+  }
+  return hasClearDeterministicEvidence(result.deterministicReasons ?? result.reasons);
+}
+
+function hasClearDeterministicEvidence(reasons: string[]): boolean {
+  return reasons.some((reason) => {
+    const normalized = reason.toLowerCase();
+    return normalized.startsWith("shared entities:")
+      || normalized.startsWith("mentions entities:")
+      || normalized.startsWith("shared tags:")
+      || normalized.startsWith("shared topics:")
+      || normalized.startsWith("literal entity match:")
+      || normalized.startsWith("literal title match:")
+      || normalized.startsWith("literal filename match:")
+      || normalized.startsWith("literal early content match:")
+      || hasSpecificKeywordOverlap(normalized);
+  });
+}
+
+function hasSpecificKeywordOverlap(reason: string): boolean {
+  if (!reason.startsWith("keyword overlap:")) {
+    return false;
+  }
+  const terms = reason
+    .slice("keyword overlap:".length)
+    .split(",")
+    .map((term) => term.trim())
+    .filter(Boolean);
+  return terms.some((term) => !genericRelatedKeywords.has(term));
+}
+
+function isUnrelatedRerankItem(item: Record<string, unknown>): boolean {
+  return isUnrelatedValue(item.strength)
+    || isUnrelatedValue(item.relevanceClass)
+    || isUnrelatedValue(item.relevance_class)
+    || hasUnrelatedExplanation(typeof item.explanation === "string" ? [item.explanation] : []);
+}
+
+function isUnrelatedValue(value: unknown): boolean {
+  return typeof value === "string" && value.toLowerCase() === "unrelated";
+}
+
+function hasUnrelatedExplanation(reasons: string[]): boolean {
+  return reasons.some((reason) => {
+    const normalized = reason.toLowerCase();
+    return /\bunrelated\b|\bnot related\b|\bno clear relation\b|\bno meaningful relation\b/i.test(reason)
+      || /\bnot\s+(?:about|work|hours|schedule|relevant|responsive)\b/.test(normalized)
+      || /\bdoes\s+not\s+(?:discuss|mention|address|answer|connect|relate)\b/.test(normalized)
+      || /\bmentions?\b.+\bnot\b.+\b(?:work|hours|schedule|relevant|responsive|about)\b/.test(normalized);
   });
 }
 
@@ -277,6 +347,31 @@ function normalizeStrength(value: unknown, relevance: number): RelatedStrength {
   return "Weak";
 }
 
+function capStrength(strength: RelatedStrength, maximum: RelatedStrength): RelatedStrength {
+  return strengthRank(strength) <= strengthRank(maximum) ? strength : maximum;
+}
+
+function strengthRank(strength: RelatedStrength): number {
+  switch (strength) {
+    case "Strong":
+      return 3;
+    case "Moderate":
+      return 2;
+    case "Weak":
+      return 1;
+  }
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
+
+const genericRelatedKeywords = new Set([
+  "idea",
+  "journal",
+  "task",
+  "list",
+  "meeting",
+  "research",
+  "scratchpad"
+]);
