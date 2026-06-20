@@ -18,6 +18,7 @@ export class NoteSession {
   private processed: string | undefined;
   private savedNote: SavedNote | undefined;
   private dirty = false;
+  private metadataRevision = 0;
 
   constructor(
     private readonly store: NoteStore,
@@ -36,14 +37,17 @@ export class NoteSession {
     };
   }
 
-  async append(text: string): Promise<void> {
+  append(text: string): Promise<void> {
     this.lines.push(text);
     this.processed = undefined;
-    this.metadata = await extractMetadata(this.raw, this.provider);
+    this.metadata = fallbackMetadata(this.raw);
     this.dirty = true;
+    this.refreshMetadataInBackground();
+    return Promise.resolve();
   }
 
   async newNote(): Promise<void> {
+    this.metadataRevision += 1;
     if (this.dirty) {
       this.save();
     }
@@ -73,6 +77,7 @@ export class NoteSession {
 
   async regenerateTags(): Promise<string[]> {
     this.ensureRaw();
+    this.metadataRevision += 1;
     let tags: string[];
     if (!this.provider) {
       tags = fallbackTags(this.raw);
@@ -90,6 +95,7 @@ export class NoteSession {
 
   async refreshMetadata(): Promise<NoteMetadata> {
     this.ensureRaw();
+    this.metadataRevision += 1;
     this.metadata = await refreshMetadata(this.raw, this.provider);
     this.dirty = true;
     return this.metadata;
@@ -97,6 +103,7 @@ export class NoteSession {
 
   async summarize(): Promise<string> {
     this.ensureRaw();
+    this.metadataRevision += 1;
     if (!this.provider) {
       const summary = fallbackSummary(this.raw);
       this.metadata = { ...this.metadata, summary };
@@ -184,6 +191,40 @@ export class NoteSession {
     return this.savedNote
       ? this.store.relatedToDraft(this.draft, { excludeNoteId: this.savedNote.id })
       : this.store.relatedToDraft(this.draft);
+  }
+
+  private refreshMetadataInBackground(): void {
+    if (!this.provider) {
+      this.metadataRevision += 1;
+      return;
+    }
+
+    const revision = this.metadataRevision + 1;
+    this.metadataRevision = revision;
+    const raw = this.raw;
+
+    void extractMetadata(raw, this.provider).then((metadata) => {
+      if (revision !== this.metadataRevision || raw !== this.raw) {
+        return;
+      }
+
+      const metadataChanged = JSON.stringify(metadata) !== JSON.stringify(this.metadata);
+      this.metadata = metadata;
+      if (!metadataChanged) {
+        return;
+      }
+
+      this.dirty = true;
+
+      if (this.savedNote) {
+        try {
+          this.savedNote = this.store.updateDraft(this.savedNote.id, this.draft);
+          this.dirty = false;
+        } catch {
+          // Background metadata refresh should never interrupt capture.
+        }
+      }
+    });
   }
 }
 

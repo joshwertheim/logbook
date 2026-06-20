@@ -36,6 +36,36 @@ class FailingProvider implements LlmProvider {
   }
 }
 
+class DeferredMetadataProvider implements LlmProvider {
+  called = false;
+  private resolveMetadata: ((value: { content: string }) => void) | undefined;
+
+  async complete(request: LlmRequest): Promise<{ content: string }> {
+    const prompt = request.messages.at(-1)?.content ?? "";
+    if (prompt.includes("Extract lightweight metadata")) {
+      this.called = true;
+      return new Promise((resolve) => {
+        this.resolveMetadata = resolve;
+      });
+    }
+    return { content: "ok" };
+  }
+
+  resolve(): void {
+    this.resolveMetadata?.({
+      content: JSON.stringify({
+        title: "Async Garden Plan",
+        tags: ["garden"],
+        topics: ["Garden planning"],
+        entities: [{ name: "Garden beds", type: "project" }],
+        dates: ["tomorrow"],
+        summary: "Ideas for the garden plan.",
+        type: "idea"
+      })
+    });
+  }
+}
+
 class RerankProvider implements LlmProvider {
   async complete(request: LlmRequest): Promise<{ content: string }> {
     const prompt = request.messages.at(-1)?.content ?? "";
@@ -165,6 +195,33 @@ test("capture falls back to local metadata when automatic provider metadata fail
 
     assert.equal(saved.title, "Quota-safe Capture Today.");
     assert.equal(fs.existsSync(saved.markdownPath), true);
+  } finally {
+    store.close();
+  }
+});
+
+test("append does not wait for automatic provider metadata", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "logbook-session-async-metadata-"));
+  const store = new NoteStore({
+    notesDir: path.join(dir, "notes"),
+    dbPath: path.join(dir, ".logbook", "logbook.sqlite")
+  });
+  const provider = new DeferredMetadataProvider();
+  const session = new NoteSession(store, provider);
+
+  try {
+    await session.append("Garden plan tomorrow: buy soil and sketch beds.");
+    assert.equal(provider.called, true);
+
+    const saved = session.save();
+    assert.equal(saved.title, "Garden Plan Tomorrow: Buy Soil And Sketch Beds.");
+
+    provider.resolve();
+    await new Promise((resolve) => setImmediate(resolve));
+
+    const results = session.search("Garden planning");
+    assert.equal(results.length, 1);
+    assert.equal(results[0]?.title, "Async Garden Plan");
   } finally {
     store.close();
   }
