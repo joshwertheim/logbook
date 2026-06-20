@@ -1,5 +1,4 @@
 import { metadataExtractionPrompt, noteTakingSystemPrompt, summaryPrompt, tagsPrompt } from "./prompts.js";
-import { ProviderConfigError } from "./provider.js";
 import type { LlmProvider, NoteMetadata, NoteType } from "./types.js";
 
 const noteTypes = new Set<NoteType>(["idea", "journal", "task list", "meeting", "research", "scratchpad"]);
@@ -32,11 +31,8 @@ export async function extractMetadata(raw: string, provider?: LlmProvider): Prom
       ]
     });
     return normalizeMetadata(JSON.parse(response.content), raw);
-  } catch (error) {
-    if (error instanceof ProviderConfigError) {
-      return fallbackMetadata(raw);
-    }
-    throw error;
+  } catch {
+    return fallbackMetadata(raw);
   }
 }
 

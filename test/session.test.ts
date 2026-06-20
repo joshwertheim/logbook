@@ -28,6 +28,12 @@ class MockProvider implements LlmProvider {
   }
 }
 
+class FailingProvider implements LlmProvider {
+  async complete(): Promise<{ content: string }> {
+    throw new Error("LLM request failed with 429: insufficient_quota");
+  }
+}
+
 test("captures, extracts metadata, processes, saves, and searches", async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "logbook-session-"));
   const store = new NoteStore({
@@ -47,6 +53,25 @@ test("captures, extracts metadata, processes, saves, and searches", async () => 
     assert.equal(fs.existsSync(saved.markdownPath), true);
     assert.equal(results.length, 1);
     assert.equal(results[0]?.title, "Garden Plan");
+  } finally {
+    store.close();
+  }
+});
+
+test("capture falls back to local metadata when automatic provider metadata fails", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "logbook-session-fallback-"));
+  const store = new NoteStore({
+    notesDir: path.join(dir, "notes"),
+    dbPath: path.join(dir, ".logbook", "logbook.sqlite")
+  });
+  const session = new NoteSession(store, new FailingProvider());
+
+  try {
+    await session.append("Quota-safe capture today.");
+    const saved = session.save();
+
+    assert.equal(saved.title, "Quota-safe Capture Today.");
+    assert.equal(fs.existsSync(saved.markdownPath), true);
   } finally {
     store.close();
   }
