@@ -1,4 +1,5 @@
 import path from "node:path";
+import { formatLocalDate } from "./check.js";
 import type { NoteDraft, NoteMetadata } from "./types.js";
 
 export function slugify(value: string): string {
@@ -13,7 +14,7 @@ export function slugify(value: string): string {
 }
 
 export function datedMarkdownFilename(title: string, date = new Date()): string {
-  return `${date.toISOString().slice(0, 10)}-${slugify(title)}.md`;
+  return `${formatLocalDate(date)}-${slugify(title)}.md`;
 }
 
 export function markdownPath(notesDir: string, title: string, date = new Date()): string {

@@ -5,6 +5,7 @@ export type SlashCommandName =
   | "tag"
   | "summary"
   | "search"
+  | "check"
   | "provider"
   | "help"
   | "quit";
@@ -29,6 +30,7 @@ const commands = new Set<SlashCommandName>([
   "tag",
   "summary",
   "search",
+  "check",
   "provider",
   "help",
   "quit"
@@ -66,6 +68,7 @@ export function helpText(): string {
     "/tag - regenerate tags/topics",
     "/summary - create a short summary",
     "/search <query> - search stored notes",
+    "/check <question> - check saved notes by natural date phrases, such as what happened today",
     "/provider - show active model/provider config",
     "/help - list commands",
     "/quit - exit"

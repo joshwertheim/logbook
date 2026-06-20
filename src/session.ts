@@ -1,6 +1,7 @@
 import { organizationPrompt, noteTakingSystemPrompt } from "./prompts.js";
 import { generateSummary, generateTags, extractMetadata, fallbackMetadata } from "./metadata.js";
-import type { LlmProvider, NoteDraft, NoteMetadata, SavedNote, SearchResult } from "./types.js";
+import type { CheckResult, LlmProvider, NoteDraft, NoteMetadata, SavedNote, SearchResult } from "./types.js";
+import type { DateCheckQuery } from "./check.js";
 import { ProviderConfigError } from "./provider.js";
 import { NoteStore } from "./storage.js";
 
@@ -81,6 +82,10 @@ export class NoteSession {
 
   search(query: string): SearchResult[] {
     return this.store.search(query);
+  }
+
+  checkByDate(query: DateCheckQuery): CheckResult[] {
+    return this.store.checkByDate(query);
   }
 
   private ensureRaw(): void {

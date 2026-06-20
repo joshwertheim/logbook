@@ -30,6 +30,10 @@ export interface SearchResult extends SavedNote {
   snippet: string;
 }
 
+export interface CheckResult extends SearchResult {
+  reasons: string[];
+}
+
 export interface ChatMessage {
   role: "system" | "user" | "assistant";
   content: string;

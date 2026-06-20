@@ -1,8 +1,9 @@
 import fs from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { matchDateCheck, type DateCheckQuery } from "./check.js";
 import { datedMarkdownFilename, renderMarkdown, slugify } from "./markdown.js";
-import type { NoteDraft, SavedNote, SearchResult } from "./types.js";
+import type { CheckResult, NoteDraft, SavedNote, SearchResult } from "./types.js";
 
 export interface StoragePaths {
   notesDir: string;
@@ -20,6 +21,10 @@ interface NoteRow {
   note_type: string;
   created_at: string;
   updated_at: string;
+}
+
+interface CheckRow extends NoteRow {
+  metadata_json: string | null;
 }
 
 export class NoteStore {
@@ -113,6 +118,41 @@ export class NoteStore {
       tags: this.tagsForNote(row.id),
       snippet: makeSnippet(row.raw_content, query)
     }));
+  }
+
+  checkByDate(query: DateCheckQuery): CheckResult[] {
+    const rows = this.db.prepare(`
+      SELECT notes.*, (
+        SELECT note_versions.metadata_json
+        FROM note_versions
+        WHERE note_versions.note_id = notes.id
+        ORDER BY note_versions.created_at DESC, note_versions.id DESC
+        LIMIT 1
+      ) AS metadata_json
+      FROM notes
+      ORDER BY notes.updated_at DESC
+      LIMIT 100
+    `).all() as CheckRow[];
+
+    return rows.flatMap((row) => {
+      const dates = metadataDates(row.metadata_json);
+      const match = matchDateCheck({
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+        dates
+      }, query);
+
+      if (!match.matched) {
+        return [];
+      }
+
+      return [{
+        ...rowToSavedNote(row),
+        tags: this.tagsForNote(row.id),
+        snippet: makeSnippet(row.raw_content, query.relativeWord ?? query.targetDate),
+        reasons: match.reasons
+      }];
+    });
   }
 
   private migrate(): void {
@@ -215,4 +255,20 @@ function makeSnippet(content: string, query: string): string {
   const start = Math.max(0, index - 60);
   const end = Math.min(content.length, index + query.length + 100);
   return content.slice(start, end).trim();
+}
+
+function metadataDates(metadataJson: string | null): string[] {
+  if (!metadataJson) {
+    return [];
+  }
+
+  try {
+    const metadata = JSON.parse(metadataJson) as { dates?: unknown };
+    if (!Array.isArray(metadata.dates)) {
+      return [];
+    }
+    return metadata.dates.filter((date): date is string => typeof date === "string");
+  } catch {
+    return [];
+  }
 }

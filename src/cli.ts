@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { createInterface } from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
+import { parseCheckQuery } from "./check.js";
 import { parseInput, helpText } from "./commands.js";
 import { loadDotEnv } from "./env.js";
 import { OpenAICompatibleProvider, providerConfigFromEnv, providerStatus, ProviderConfigError } from "./provider.js";
@@ -76,6 +77,23 @@ async function main(): Promise<void> {
             }
             for (const result of results) {
               output.write(`[${result.id}] ${result.title} (${result.tags.join(", ")})\n${result.snippet}\n${result.markdownPath}\n`);
+            }
+            break;
+          }
+          case "check": {
+            const query = parseCheckQuery(parsed.args);
+            if (query.kind === "unsupported") {
+              output.write(`${query.reason}\n`);
+              break;
+            }
+            const results = session.checkByDate(query);
+            if (results.length === 0) {
+              output.write(`No saved notes matched ${query.label} (${query.targetDate}).\n`);
+              break;
+            }
+            output.write(`Saved notes matching ${query.label} (${query.targetDate}):\n`);
+            for (const result of results) {
+              output.write(`[${result.id}] ${result.title} - ${result.reasons.join(", ")}\n${result.snippet}\n${result.markdownPath}\n`);
             }
             break;
           }

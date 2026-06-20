@@ -17,6 +17,14 @@ test("parses slash commands with args", () => {
   });
 });
 
+test("parses check command with natural language args", () => {
+  assert.deepEqual(parseInput("/check what happened today"), {
+    kind: "command",
+    name: "check",
+    args: "what happened today"
+  });
+});
+
 test("treats unknown slash commands as note input", () => {
   assert.deepEqual(parseInput("/unknown value"), {
     kind: "input",

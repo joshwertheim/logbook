@@ -45,6 +45,7 @@ Local OpenAI-compatible servers can also work if they expose `/chat/completions`
 - `/tag` regenerates tags and topics.
 - `/summary` creates a short summary.
 - `/search <query>` searches stored notes.
+- `/check <question>` checks saved notes by natural date phrases, such as `/check what happened today`.
 - `/provider` shows active provider configuration.
 - `/help` lists commands.
 - `/quit` exits cleanly.
