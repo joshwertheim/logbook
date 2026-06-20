@@ -51,6 +51,27 @@ export function fallbackSummary(raw: string): string {
   return fallbackMetadata(raw).summary;
 }
 
+export function fallbackTags(raw: string): string[] {
+  const type = fallbackMetadata(raw).type;
+  const tags = new Set<string>();
+
+  if (type !== "scratchpad") {
+    tags.add(type.replace(/\s+/g, "-"));
+  }
+
+  for (const match of raw.toLowerCase().matchAll(/\b[a-z][a-z0-9-]{3,}\b/g)) {
+    const word = match[0];
+    if (!commonWords.has(word)) {
+      tags.add(word);
+    }
+    if (tags.size >= 8) {
+      break;
+    }
+  }
+
+  return Array.from(tags);
+}
+
 export async function generateTags(raw: string, provider: LlmProvider): Promise<string[]> {
   const response = await provider.complete({
     responseFormat: "json",
@@ -121,3 +142,23 @@ function inferType(raw: string): NoteType {
 function titleCase(value: string): string {
   return value.replace(/\w\S*/g, (word) => word.charAt(0).toUpperCase() + word.slice(1));
 }
+
+const commonWords = new Set([
+  "about",
+  "after",
+  "also",
+  "and",
+  "because",
+  "before",
+  "from",
+  "have",
+  "into",
+  "need",
+  "note",
+  "that",
+  "the",
+  "this",
+  "today",
+  "tomorrow",
+  "with"
+]);

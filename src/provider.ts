@@ -7,6 +7,17 @@ export class ProviderConfigError extends Error {
   }
 }
 
+export class ProviderRequestError extends Error {
+  constructor(
+    readonly status: number,
+    readonly details: string,
+    message = providerRequestMessage(status, details)
+  ) {
+    super(message);
+    this.name = "ProviderRequestError";
+  }
+}
+
 export interface OpenAICompatibleConfig {
   baseUrl: string | undefined;
   apiKey: string | undefined;
@@ -36,6 +47,30 @@ export function providerStatus(config: OpenAICompatibleConfig): string {
   const model = config.model ?? "(not set)";
   const apiKey = config.apiKey ? "(set)" : "(not set)";
   return `OpenAI-compatible provider\nbase URL: ${baseUrl}\nmodel: ${model}\nAPI key: ${apiKey}`;
+}
+
+export function providerRequestMessage(status: number, details: string): string {
+  const providerMessage = extractProviderMessage(details);
+  if (status === 429 && isInsufficientQuota(details)) {
+    return "LLM provider quota is exhausted. Check your plan/billing or switch LLM_BASE_URL, LLM_API_KEY, and LLM_MODEL to another provider.";
+  }
+  if (status === 429) {
+    return "LLM provider rate limit was hit. Wait a moment and try again, or switch to another configured provider.";
+  }
+  return `LLM request failed with ${status}${providerMessage ? `: ${providerMessage}` : "."}`;
+}
+
+function isInsufficientQuota(details: string): boolean {
+  return /insufficient_quota|exceeded your current quota/i.test(details);
+}
+
+function extractProviderMessage(details: string): string | undefined {
+  try {
+    const parsed = JSON.parse(details) as { error?: { message?: unknown } };
+    return typeof parsed.error?.message === "string" ? parsed.error.message : undefined;
+  } catch {
+    return details.trim() || undefined;
+  }
 }
 
 export function createOpenAIChatRequest(config: ConfiguredOpenAICompatibleConfig, request: LlmRequest): {
@@ -84,7 +119,7 @@ export class OpenAICompatibleProvider implements LlmProvider {
     const response = await this.fetchImpl(url, init);
     if (!response.ok) {
       const text = await response.text();
-      throw new Error(`LLM request failed with ${response.status}: ${text}`);
+      throw new ProviderRequestError(response.status, text);
     }
 
     const payload = await response.json() as {

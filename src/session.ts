@@ -1,5 +1,5 @@
 import { organizationPrompt, noteTakingSystemPrompt } from "./prompts.js";
-import { generateSummary, generateTags, extractMetadata, fallbackMetadata, fallbackSummary } from "./metadata.js";
+import { generateSummary, generateTags, extractMetadata, fallbackMetadata, fallbackSummary, fallbackTags } from "./metadata.js";
 import type { CheckResult, LlmProvider, NoteDraft, NoteMetadata, SavedNote, SearchResult } from "./types.js";
 import type { DateCheckQuery } from "./check.js";
 import { ProviderConfigError } from "./provider.js";
@@ -63,10 +63,16 @@ export class NoteSession {
 
   async regenerateTags(): Promise<string[]> {
     this.ensureRaw();
+    let tags: string[];
     if (!this.provider) {
-      throw new ProviderConfigError();
+      tags = fallbackTags(this.raw);
+    } else {
+      try {
+        tags = await generateTags(this.raw, this.provider);
+      } catch {
+        tags = fallbackTags(this.raw);
+      }
     }
-    const tags = await generateTags(this.raw, this.provider);
     this.metadata = { ...this.metadata, tags };
     this.dirty = true;
     return tags;

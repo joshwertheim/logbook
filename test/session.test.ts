@@ -95,6 +95,24 @@ test("summary falls back locally when provider request fails", async () => {
   }
 });
 
+test("tag regeneration falls back locally when provider request fails", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "logbook-session-tag-fallback-"));
+  const store = new NoteStore({
+    notesDir: path.join(dir, "notes"),
+    dbPath: path.join(dir, ".logbook", "logbook.sqlite")
+  });
+  const session = new NoteSession(store, new FailingProvider());
+
+  try {
+    await session.append("Research notes about sqlite indexing and query planning.");
+    const tags = await session.regenerateTags();
+
+    assert.deepEqual(tags, ["research", "notes", "sqlite", "indexing", "query", "planning"]);
+  } finally {
+    store.close();
+  }
+});
+
 test("preserves multiline raw content in a single append", async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "logbook-session-multiline-"));
   const store = new NoteStore({

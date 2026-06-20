@@ -37,3 +37,24 @@ test("provider returns assistant content from mocked fetch", async () => {
 
   assert.equal(response.content, "organized note");
 });
+
+test("provider reports insufficient quota with a concise message", async () => {
+  const fetchImpl: typeof fetch = async () => new Response(JSON.stringify({
+    error: {
+      message: "You exceeded your current quota, please check your plan and billing details.",
+      type: "insufficient_quota",
+      code: "insufficient_quota"
+    }
+  }), { status: 429 });
+
+  const provider = new OpenAICompatibleProvider({
+    baseUrl: "http://example.test/v1",
+    apiKey: "key",
+    model: "model"
+  }, fetchImpl);
+
+  await assert.rejects(
+    provider.complete({ messages: [{ role: "user", content: "organize" }] }),
+    /LLM provider quota is exhausted/
+  );
+});
