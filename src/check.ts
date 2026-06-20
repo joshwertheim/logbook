@@ -98,7 +98,11 @@ export function matchDateCheck(input: CheckMatchInput, query: DateCheckQuery): C
 
   for (const date of input.dates) {
     const normalized = date.trim().toLowerCase();
-    if (normalized === query.targetDate || (query.relativeWord !== undefined && normalized === query.relativeWord)) {
+    if (
+      normalized === query.targetDate
+      || normalizeDateToken(normalized) === query.targetDate
+      || (query.relativeWord !== undefined && normalized === query.relativeWord)
+    ) {
       reasons.push(`mentions ${date}`);
     }
   }
@@ -120,6 +124,23 @@ export function formatLocalDate(date: Date): string {
   const month = String(date.getMonth() + 1).padStart(2, "0");
   const day = String(date.getDate()).padStart(2, "0");
   return `${year}-${month}-${day}`;
+}
+
+function normalizeDateToken(value: string): string | undefined {
+  const isoDate = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (isoDate?.[1] && isoDate[2] && isoDate[3]) {
+    return `${isoDate[1]}-${isoDate[2]}-${isoDate[3]}`;
+  }
+
+  const slashDate = /^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/.exec(value);
+  if (slashDate?.[1] && slashDate[2] && slashDate[3]) {
+    const year = slashDate[3].length === 2 ? `20${slashDate[3]}` : slashDate[3];
+    const month = slashDate[1].padStart(2, "0");
+    const day = slashDate[2].padStart(2, "0");
+    return `${year}-${month}-${day}`;
+  }
+
+  return undefined;
 }
 
 function localDateFromTimestamp(value: string): string {

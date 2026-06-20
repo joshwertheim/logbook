@@ -169,7 +169,6 @@ export class NoteStore {
       ) AS metadata_json
       FROM notes
       ORDER BY notes.updated_at DESC
-      LIMIT 100
     `).all() as CheckRow[];
 
     return rows.flatMap((row) => {

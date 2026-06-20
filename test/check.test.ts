@@ -36,3 +36,20 @@ test("matches saved notes by created date and metadata dates", () => {
     reasons: ["saved on 2026-06-20", "mentions today"]
   });
 });
+
+test("matches slash-form metadata dates against normalized date queries", () => {
+  const query = {
+    kind: "date" as const,
+    label: "6/20/2026",
+    targetDate: "2026-06-20"
+  };
+
+  assert.deepEqual(matchDateCheck({
+    createdAt: "2026-06-19T12:00:00.000Z",
+    updatedAt: "2026-06-19T12:00:00.000Z",
+    dates: ["6/20/2026"]
+  }, query), {
+    matched: true,
+    reasons: ["mentions 6/20/2026"]
+  });
+});

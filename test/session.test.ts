@@ -177,6 +177,28 @@ test("new note resets save tracking so the next save creates a separate file", a
   }
 });
 
+test("new note saves dirty content before resetting", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "logbook-session-new-save-"));
+  const store = new NoteStore({
+    notesDir: path.join(dir, "notes"),
+    dbPath: path.join(dir, ".logbook", "logbook.sqlite")
+  });
+  const session = new NoteSession(store);
+
+  try {
+    await session.append("Unsaved note before new");
+    await session.newNote();
+    await session.append("Next note");
+    const next = session.save();
+
+    assert.equal(next.title, "Next Note");
+    assert.equal(fs.readdirSync(path.join(dir, "notes")).length, 2);
+    assert.equal(session.search("Unsaved").length, 1);
+  } finally {
+    store.close();
+  }
+});
+
 test("autosave skips unchanged drafts", async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "logbook-session-autosave-"));
   const store = new NoteStore({

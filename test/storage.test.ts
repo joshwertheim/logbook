@@ -134,3 +134,48 @@ test("checks notes by date", () => {
     store.close();
   }
 });
+
+test("checks notes by date beyond the 100 most recently updated notes", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "logbook-check-limit-"));
+  const store = new NoteStore({
+    notesDir: path.join(dir, "notes"),
+    dbPath: path.join(dir, ".logbook", "logbook.sqlite")
+  });
+
+  try {
+    store.saveDraft({
+      raw: "Old note mentions the launch date.",
+      metadata: {
+        title: "Old Launch Date",
+        tags: ["launch"],
+        dates: ["2026-06-20"],
+        summary: "Old launch date note.",
+        type: "meeting"
+      }
+    }, new Date("2026-01-01T12:00:00Z"));
+
+    for (let index = 0; index < 100; index += 1) {
+      store.saveDraft({
+        raw: `Recent unrelated note ${index}.`,
+        metadata: {
+          title: `Recent ${index}`,
+          tags: [],
+          dates: [],
+          summary: "Recent unrelated note.",
+          type: "scratchpad"
+        }
+      }, new Date(`2026-02-${String((index % 28) + 1).padStart(2, "0")}T12:00:00Z`));
+    }
+
+    const results = store.checkByDate({
+      kind: "date",
+      label: "2026-06-20",
+      targetDate: "2026-06-20"
+    });
+
+    assert.equal(results.length, 1);
+    assert.equal(results[0]?.title, "Old Launch Date");
+  } finally {
+    store.close();
+  }
+});

@@ -37,6 +37,9 @@ export class NoteSession {
   }
 
   async newNote(): Promise<void> {
+    if (this.dirty) {
+      this.save();
+    }
     this.lines = [];
     this.processed = undefined;
     this.metadata = fallbackMetadata("");
