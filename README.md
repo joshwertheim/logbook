@@ -63,6 +63,8 @@ validate them against real note flows before relying on them:
 
 ## Commands
 
+Press Tab while typing a slash command to autocomplete matching commands, such as `/rel` to `/related`.
+
 - `/new` starts a new note session.
 - `/save` writes or updates the current note to Markdown and SQLite.
 - `/process` lightly organizes the note while preserving the raw capture.
