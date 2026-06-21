@@ -61,6 +61,27 @@ validate them against real note flows before relying on them:
 /process
 ```
 
+## How LLMs Are Used
+
+Logbook uses one OpenAI-compatible chat-completions provider. Every LLM request is a `POST` to:
+
+```text
+${LLM_BASE_URL}/chat/completions
+```
+
+The request includes the configured `LLM_MODEL`, a `messages` array, a temperature, and, for JSON tasks, `response_format: { "type": "json_object" }`. Requests are authenticated with `Authorization: Bearer ${LLM_API_KEY}`.
+
+LLM calls happen in these cases:
+
+- Capturing note text starts a background metadata extraction call when a provider is configured. The raw note is sent with a metadata prompt, and the model returns JSON for title, tags, topics, entities, dates, summary, and type. If this fails, Logbook keeps a local fallback title, summary, dates, and inferred type.
+- `/metadata` runs the same metadata extraction call immediately and updates the current draft.
+- `/summary` sends the raw note with a summary prompt and stores the returned summary. If the call fails, Logbook falls back to a local first-line summary.
+- `/tag` sends the raw note with a tag-generation prompt and expects JSON shaped like `{ "tags": [...] }`. If the call fails, Logbook falls back to local keyword tags.
+- `/process` sends the raw note with an organization prompt and stores the returned organized version. This command requires a configured provider.
+- `/related [query]` first finds deterministic candidates locally, then asks the model to rerank those candidates as JSON. If no provider is configured or reranking fails, Logbook returns the deterministic ranking and prints why LLM reranking was skipped.
+
+These commands do not call the LLM provider: `/save`, autosave, `/new`, `/search`, `/check`, `/index`, `/provider`, `/compose`, `/help`, and `/quit`.
+
 ## Commands
 
 Press Tab while typing a slash command to autocomplete matching commands, such as `/rel` to `/related`.
