@@ -15,6 +15,16 @@ test("parses slash commands with args", () => {
     name: "search",
     args: "quarterly plan"
   });
+  assert.deepEqual(parseInput("/amend quarterly plan"), {
+    kind: "command",
+    name: "amend",
+    args: "quarterly plan"
+  });
+  assert.deepEqual(parseInput("/edit quarterly plan"), {
+    kind: "command",
+    name: "edit",
+    args: "quarterly plan"
+  });
 });
 
 test("parses check command with natural language args", () => {
@@ -83,6 +93,8 @@ test("parses related selection args", () => {
 });
 
 test("help text documents related command", () => {
+  assert.match(helpText(), /\/amend <query>/);
+  assert.match(helpText(), /\/edit <query>/);
   assert.match(helpText(), /\/related \[query\]/);
   assert.match(helpText(), /\/decisions <query>/);
   assert.match(helpText(), /\/gaps <query>/);
@@ -137,6 +149,8 @@ test("treats unknown slash commands as command errors", () => {
 
 test("completes slash command prefixes", () => {
   assert.deepEqual(completeSlashCommand("/rel"), [["/related"], "/rel"]);
+  assert.deepEqual(completeSlashCommand("/ame"), [["/amend"], "/ame"]);
+  assert.deepEqual(completeSlashCommand("/edi"), [["/edit"], "/edi"]);
   assert.deepEqual(completeSlashCommand("/dec"), [["/decisions"], "/dec"]);
   assert.deepEqual(completeSlashCommand("/gap"), [["/gaps"], "/gap"]);
 });

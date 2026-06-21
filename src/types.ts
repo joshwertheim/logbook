@@ -59,6 +59,19 @@ export interface RelatedLookupResult {
   llmSkippedReason?: string;
 }
 
+export interface NoteResolutionCandidate extends SearchResult {
+  score: number;
+  reasons: string[];
+  exact: boolean;
+}
+
+export interface NoteResolutionResult {
+  query: string;
+  selected?: NoteResolutionCandidate;
+  candidates: NoteResolutionCandidate[];
+  llmSkippedReason?: string;
+}
+
 export type AnalysisConfidence = "High" | "Medium" | "Low";
 
 export interface DecisionAnalysisItem {

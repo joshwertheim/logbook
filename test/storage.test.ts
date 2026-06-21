@@ -109,6 +109,41 @@ test("updates saved notes in place and records a new version", () => {
   }
 });
 
+test("resolves exact note candidates by id, title, path, and basename", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "logbook-resolve-exact-"));
+  const store = new NoteStore({
+    notesDir: path.join(dir, "notes"),
+    dbPath: path.join(dir, ".logbook", "logbook.sqlite")
+  });
+
+  try {
+    const saved = store.saveDraft({
+      raw: "Exact resolution note.",
+      metadata: {
+        title: "Resolution Target",
+        tags: [],
+        topics: [],
+        entities: [],
+        dates: [],
+        summary: "Resolution note.",
+        type: "scratchpad"
+      }
+    }, new Date("2026-06-19T12:00:00Z"));
+
+    assert.equal(store.resolveNoteCandidates(String(saved.id))[0]?.id, saved.id);
+    assert.equal(store.resolveNoteCandidates("resolution target")[0]?.id, saved.id);
+    assert.equal(store.resolveNoteCandidates(saved.markdownPath)[0]?.id, saved.id);
+    assert.equal(store.resolveNoteCandidates(path.basename(saved.markdownPath))[0]?.id, saved.id);
+    assert.equal(store.resolveNoteCandidates(path.basename(saved.markdownPath, ".md"))[0]?.id, saved.id);
+
+    const draft = store.getDraft(saved.id);
+    assert.equal(draft?.raw, "Exact resolution note.");
+    assert.equal(draft?.metadata.title, "Resolution Target");
+  } finally {
+    store.close();
+  }
+});
+
 test("indexes markdown edits into sqlite", () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "logbook-index-"));
   const store = new NoteStore({

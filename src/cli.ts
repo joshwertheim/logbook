@@ -1,16 +1,28 @@
 #!/usr/bin/env node
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { clearLine, cursorTo } from "node:readline";
 import { createInterface } from "node:readline/promises";
 import { argv, stdin as input, stdout as output } from "node:process";
+import { spawn } from "node:child_process";
 import { parseCheckQuery } from "./check.js";
 import { completeSlashCommand, parseInput, helpText, parseRelatedArgs, parseRelatedSelectionArgs } from "./commands.js";
 import { loadDotEnv } from "./env.js";
 import { OpenAICompatibleProvider, providerConfigFromEnv, providerStatus, ProviderConfigError } from "./provider.js";
 import { NoteSession } from "./session.js";
 import { defaultStoragePaths, NoteStore } from "./storage.js";
-import type { DecisionAnalysisResult, GapAnalysisResult, RelatedResult } from "./types.js";
+import type { DecisionAnalysisResult, GapAnalysisResult, NoteResolutionCandidate, RelatedResult } from "./types.js";
 
 const autosaveDelayMs = 2000;
+
+type ComposeBuffer =
+  | { kind: "compose"; lines: string[] }
+  | { kind: "amend"; lines: string[]; target: NoteResolutionCandidate };
+
+type PendingWrite =
+  | { kind: "amend"; target: NoteResolutionCandidate; text: string; now: Date }
+  | { kind: "edit"; target: NoteResolutionCandidate; raw: string };
 
 async function main(): Promise<void> {
   if (argv[2] === "index") {
@@ -30,13 +42,14 @@ async function main(): Promise<void> {
   const session = new NoteSession(store, provider);
   const isTerminal = input.isTTY && output.isTTY;
   const rl = createInterface({ input, output, prompt: "> ", terminal: isTerminal, completer: completeSlashCommand });
-  let composeBuffer: string[] | undefined;
+  let composeBuffer: ComposeBuffer | undefined;
+  let pendingWrite: PendingWrite | undefined;
   let autosaveTimer: ReturnType<typeof setTimeout> | undefined;
   let lastRelatedResults: RelatedResult[] = [];
 
   const writePrompt = (): void => {
     if (isTerminal) {
-      rl.setPrompt(composeBuffer ? "| " : "> ");
+      rl.setPrompt(pendingWrite ? "Confirm write (y/N) " : composeBuffer ? "| " : "> ");
       rl.prompt();
     }
   };
@@ -82,28 +95,51 @@ async function main(): Promise<void> {
     writePrompt();
 
     for await (const line of rl) {
+      if (pendingWrite) {
+        const confirmed = /^(?:y|yes)$/i.test(line.trim());
+        if (!confirmed) {
+          pendingWrite = undefined;
+          output.write("No changes written.\n");
+          writePrompt();
+          continue;
+        }
+
+        const write = pendingWrite;
+        pendingWrite = undefined;
+        const saved = write.kind === "amend"
+          ? await session.appendToExistingNote(write.target.id, write.text, write.now)
+          : await session.replaceExistingNote(write.target.id, write.raw);
+        output.write(`Updated ${saved.title}\n${saved.markdownPath}\n`);
+        writePrompt();
+        continue;
+      }
+
       if (composeBuffer) {
         if (line === "/done") {
-          const text = composeBuffer.join("\n");
+          const text = composeBuffer.lines.join("\n");
+          const compose = composeBuffer;
           composeBuffer = undefined;
-          if (text.trim()) {
+          if (!text.trim()) {
+            output.write("No multiline content captured.\n");
+          } else if (compose.kind === "compose") {
             await session.append(text);
             output.write("captured multiline note\n");
             scheduleAutosave();
           } else {
-            output.write("No multiline content captured.\n");
+            pendingWrite = { kind: "amend", target: compose.target, text, now: new Date() };
+            output.write(formatPendingWrite(pendingWrite));
           }
           writePrompt();
           continue;
         }
         if (line === "/cancel") {
           composeBuffer = undefined;
-          output.write("Canceled multiline note.\n");
+          output.write("Canceled multiline capture.\n");
           writePrompt();
           continue;
         }
 
-        composeBuffer.push(line);
+        composeBuffer.lines.push(line);
         writePrompt();
         continue;
       }
@@ -134,14 +170,63 @@ async function main(): Promise<void> {
       try {
         switch (parsed.name) {
           case "compose":
-            composeBuffer = [];
+            composeBuffer = { kind: "compose", lines: [] };
             output.write("Compose mode. Finish with /done or discard with /cancel.\n");
             break;
+          case "amend": {
+            if (!parsed.args.trim()) {
+              output.write("Usage: /amend <query>\n");
+              break;
+            }
+            const resolution = await session.resolveNote(parsed.args);
+            if (!resolution.selected) {
+              output.write(formatAmbiguousResolution(resolution.candidates));
+              if (resolution.llmSkippedReason) {
+                output.write(`${resolution.llmSkippedReason}\n`);
+              }
+              break;
+            }
+            composeBuffer = { kind: "amend", lines: [], target: resolution.selected };
+            output.write(formatResolvedTarget("Amending", resolution.selected));
+            output.write("Amend mode. Finish with /done or discard with /cancel.\n");
+            break;
+          }
+          case "edit": {
+            if (!parsed.args.trim()) {
+              output.write("Usage: /edit <query>\n");
+              break;
+            }
+            const resolution = await session.resolveNote(parsed.args);
+            if (!resolution.selected) {
+              output.write(formatAmbiguousResolution(resolution.candidates));
+              if (resolution.llmSkippedReason) {
+                output.write(`${resolution.llmSkippedReason}\n`);
+              }
+              break;
+            }
+            const draft = session.getDraft(resolution.selected.id);
+            if (!draft) {
+              output.write(`Cannot load note ${resolution.selected.id}.\n`);
+              break;
+            }
+            output.write(formatResolvedTarget("Editing", resolution.selected));
+            if (!isTerminal) {
+              output.write("/edit requires an interactive terminal editor.\n");
+              break;
+            }
+            output.write("Opening current raw capture in your editor. Save and exit to preview changes.\n");
+            rl.pause();
+            const edited = await editRawCapture(draft.raw);
+            rl.resume();
+            pendingWrite = { kind: "edit", target: resolution.selected, raw: edited };
+            output.write(formatPendingWrite(pendingWrite));
+            break;
+          }
           case "done":
-            output.write("Not currently composing. Use /compose to start a multiline note.\n");
+            output.write("Not currently composing. Use /compose, /amend, or /edit to start multiline capture.\n");
             break;
           case "cancel":
-            output.write("Not currently composing. Use /compose to start a multiline note.\n");
+            output.write("Not currently composing. Use /compose, /amend, or /edit to start multiline capture.\n");
             break;
           case "new":
             clearAutosave();
@@ -330,6 +415,96 @@ function formatRelatedSelection(result: RelatedResult, field: "all" | "snippet" 
         `ID: ${result.id}`
       ].join("\n") + "\n";
   }
+}
+
+function formatResolvedTarget(action: string, target: NoteResolutionCandidate): string {
+  return [
+    `${action} [${target.id}] ${target.title}`,
+    target.markdownPath
+  ].join("\n") + "\n";
+}
+
+function formatPendingWrite(write: PendingWrite): string {
+  if (write.kind === "amend") {
+    return [
+      `Preview append to [${write.target.id}] ${write.target.title}`,
+      write.target.markdownPath,
+      "",
+      `## Update ${formatLocalDate(write.now)}`,
+      "",
+      write.text.trim(),
+      "",
+      "Write this update? y/N"
+    ].join("\n") + "\n";
+  }
+
+  const summary = write.raw.trim().split(/\r?\n/).find(Boolean) ?? "(empty)";
+  return [
+    `Preview replacement for [${write.target.id}] ${write.target.title}`,
+    write.target.markdownPath,
+    `Replacement raw capture: ${write.raw.trim().length} characters`,
+    `First line: ${summary}`,
+    "",
+    "Write this replacement? y/N"
+  ].join("\n") + "\n";
+}
+
+function formatAmbiguousResolution(candidates: NoteResolutionCandidate[]): string {
+  if (candidates.length === 0) {
+    return "No matching saved note. Rerun with an exact note ID, title, or Markdown path.\n";
+  }
+
+  const lines = [
+    "Ambiguous note query. Rerun with an exact note ID, title, or Markdown path.",
+    ...candidates.map((candidate, index) => {
+      return `${index + 1}. [${candidate.id}] ${candidate.title}\n   ${candidate.markdownPath}\n   score ${candidate.score}: ${candidate.reasons.join("; ")}`;
+    })
+  ];
+  return `${lines.join("\n")}\n`;
+}
+
+async function editRawCapture(raw: string): Promise<string> {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "logbook-edit-"));
+  const tempPath = path.join(tempDir, "raw-capture.md");
+  fs.writeFileSync(tempPath, raw.endsWith("\n") ? raw : `${raw}\n`, "utf8");
+
+  try {
+    const [command, ...args] = editorCommand();
+    await runEditor(command, [...args, tempPath]);
+    return fs.readFileSync(tempPath, "utf8").trimEnd();
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+}
+
+function editorCommand(): string[] {
+  const configured = process.env.VISUAL || process.env.EDITOR || "vi";
+  return configured.match(/"[^"]+"|'[^']+'|\S+/g)?.map((token) => token.replace(/^(['"])(.*)\1$/, "$2")) ?? ["vi"];
+}
+
+async function runEditor(command: string | undefined, args: string[]): Promise<void> {
+  if (!command) {
+    throw new Error("No editor command configured.");
+  }
+
+  await new Promise<void>((resolve, reject) => {
+    const child = spawn(command, args, { stdio: "inherit" });
+    child.on("error", reject);
+    child.on("exit", (code, signal) => {
+      if (code === 0) {
+        resolve();
+        return;
+      }
+      reject(new Error(signal ? `Editor exited with signal ${signal}.` : `Editor exited with code ${code}.`));
+    });
+  });
+}
+
+function formatLocalDate(now: Date): string {
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  const day = String(now.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
 }
 
 function formatDecisionAnalysis(analysis: DecisionAnalysisResult): string {

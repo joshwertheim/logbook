@@ -1,6 +1,6 @@
 import { organizationPrompt, noteTakingSystemPrompt } from "./prompts.js";
 import { generateSummary, generateTags, extractMetadata, fallbackMetadata, fallbackSummary, fallbackTags, refreshMetadata } from "./metadata.js";
-import type { AnalysisConfidence, CheckResult, DecisionAnalysisItem, DecisionAnalysisResult, GapAnalysisItem, GapAnalysisResult, LlmProvider, NoteDraft, NoteMetadata, RelatedLookupResult, RelatedResult, RelatedStrength, SavedNote, SearchResult } from "./types.js";
+import type { AnalysisConfidence, CheckResult, DecisionAnalysisItem, DecisionAnalysisResult, GapAnalysisItem, GapAnalysisResult, LlmProvider, NoteDraft, NoteMetadata, NoteResolutionCandidate, NoteResolutionResult, RelatedLookupResult, RelatedResult, RelatedStrength, SavedNote, SearchResult } from "./types.js";
 import type { DateCheckQuery } from "./check.js";
 import { ProviderConfigError } from "./provider.js";
 import { NoteStore } from "./storage.js";
@@ -147,6 +147,94 @@ export class NoteSession {
 
   checkByDate(query: DateCheckQuery): CheckResult[] {
     return this.store.checkByDate(query);
+  }
+
+  getDraft(noteId: number): NoteDraft | undefined {
+    return this.store.getDraft(noteId);
+  }
+
+  async resolveNote(query: string): Promise<NoteResolutionResult> {
+    const trimmed = query.trim();
+    if (!trimmed) {
+      throw new Error("A note query is required.");
+    }
+
+    const candidates = this.store.resolveNoteCandidates(trimmed);
+    if (candidates.length === 0) {
+      return { query: trimmed, candidates: [] };
+    }
+
+    if (candidates[0]?.exact) {
+      return candidates.length === 1
+        ? { query: trimmed, selected: candidates[0], candidates }
+        : { query: trimmed, candidates };
+    }
+
+    const dominant = dominantCandidate(candidates);
+    if (dominant) {
+      return { query: trimmed, selected: dominant, candidates };
+    }
+
+    if (!this.provider) {
+      return {
+        query: trimmed,
+        candidates,
+        llmSkippedReason: "LLM reranking skipped: LLM provider is not configured."
+      };
+    }
+
+    try {
+      const reranked = await rerankResolutionCandidates(candidates, trimmed, this.provider);
+      const only = reranked[0];
+      if (reranked.length === 1 && only) {
+        return { query: trimmed, selected: only, candidates: reranked };
+      }
+      const rerankedDominant = dominantCandidate(reranked);
+      return rerankedDominant
+        ? { query: trimmed, selected: rerankedDominant, candidates: reranked }
+        : { query: trimmed, candidates: reranked };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return {
+        query: trimmed,
+        candidates,
+        llmSkippedReason: `LLM reranking skipped: ${message}`
+      };
+    }
+  }
+
+  async appendToExistingNote(noteId: number, text: string, now = new Date()): Promise<SavedNote> {
+    const existing = this.store.getDraft(noteId);
+    if (!existing) {
+      throw new Error(`Cannot update missing note ${noteId}.`);
+    }
+
+    const update = [
+      existing.raw.trimEnd(),
+      "",
+      `## Update ${localDate(now)}`,
+      "",
+      text.trim()
+    ].join("\n");
+
+    return this.replaceExistingNote(noteId, update);
+  }
+
+  async replaceExistingNote(noteId: number, raw: string): Promise<SavedNote> {
+    const existing = this.store.getDraft(noteId);
+    if (!existing) {
+      throw new Error(`Cannot update missing note ${noteId}.`);
+    }
+
+    const metadata = await refreshMetadata(raw, this.provider);
+    const title = existing.metadata.title.trim();
+    return this.store.updateDraft(noteId, {
+      raw,
+      metadata: {
+        ...metadata,
+        title: title || metadata.title
+      }
+    });
   }
 
   async related(request: RelatedRequest = {}): Promise<RelatedLookupResult> {
@@ -420,6 +508,94 @@ function normalizeAnalysisConfidence(value: unknown): AnalysisConfidence {
     return value;
   }
   return "Medium";
+}
+
+function dominantCandidate(candidates: NoteResolutionCandidate[]): NoteResolutionCandidate | undefined {
+  const top = candidates[0];
+  if (!top || top.score < 35) {
+    return undefined;
+  }
+  const second = candidates[1];
+  if (!second || top.score >= second.score * 1.75 || top.score - second.score >= 20) {
+    return top;
+  }
+  return undefined;
+}
+
+async function rerankResolutionCandidates(candidates: NoteResolutionCandidate[], query: string, provider: LlmProvider): Promise<NoteResolutionCandidate[]> {
+  const response = await provider.complete({
+    responseFormat: "json",
+    temperature: 0.1,
+    messages: [
+      {
+        role: "system",
+        content: "You select an existing note from provided candidates. Return strict JSON only. Do not add candidates that are not provided."
+      },
+      {
+        role: "user",
+        content: JSON.stringify({
+          task: "Rerank note candidates for the query. Omit unrelated candidates. Return {\"results\":[{\"id\":number,\"relevance\":number,\"explanation\":\"short reason\"}]}",
+          query,
+          candidates: candidates.map((candidate) => ({
+            id: candidate.id,
+            title: candidate.title,
+            path: candidate.markdownPath,
+            summary: candidate.summary,
+            tags: candidate.tags,
+            deterministicScore: candidate.score,
+            deterministicReasons: candidate.reasons,
+            snippet: candidate.snippet
+          }))
+        })
+      }
+    ]
+  });
+
+  const parsed = parseResolutionRerankResponse(response.content);
+  const byId = new Map(candidates.map((candidate) => [candidate.id, candidate]));
+  const seen = new Set<number>();
+  const reranked: NoteResolutionCandidate[] = [];
+  for (const item of parsed) {
+    const candidate = byId.get(item.id);
+    if (!candidate || seen.has(item.id)) {
+      continue;
+    }
+    seen.add(item.id);
+    reranked.push({
+      ...candidate,
+      score: item.relevance,
+      reasons: [item.explanation],
+      exact: false
+    });
+  }
+  return reranked.sort((left, right) => right.score - left.score || right.updatedAt.localeCompare(left.updatedAt));
+}
+
+function parseResolutionRerankResponse(content: string): Array<{ id: number; relevance: number; explanation: string }> {
+  const parsed = JSON.parse(content) as unknown;
+  if (!isRecord(parsed) || !Array.isArray(parsed.results)) {
+    throw new Error("LLM note resolution response did not include results.");
+  }
+
+  return parsed.results.flatMap((item) => {
+    if (!isRecord(item) || typeof item.id !== "number" || isUnrelatedRerankItem(item)) {
+      return [];
+    }
+    const relevance = typeof item.relevance === "number" && Number.isFinite(item.relevance)
+      ? item.relevance
+      : 0;
+    const explanation = typeof item.explanation === "string" && item.explanation.trim()
+      ? item.explanation.trim()
+      : "Selected from deterministic note candidates.";
+    return [{ id: item.id, relevance, explanation }];
+  });
+}
+
+function localDate(now: Date): string {
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  const day = String(now.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
 }
 
 async function rerankRelatedResults(candidates: RelatedResult[], source: string, provider: LlmProvider): Promise<RelatedResult[]> {

@@ -4,7 +4,7 @@ import { DatabaseSync } from "node:sqlite";
 import { matchDateCheck, type DateCheckQuery } from "./check.js";
 import { datedMarkdownFilename, renderMarkdown, slugify } from "./markdown.js";
 import { fallbackMetadata, fallbackTags, normalizeMetadata } from "./metadata.js";
-import type { CheckResult, NoteDraft, NoteEntity, NoteMetadata, RelatedResult, RelatedStrength, SavedNote, SearchResult } from "./types.js";
+import type { CheckResult, NoteDraft, NoteEntity, NoteMetadata, NoteResolutionCandidate, RelatedResult, RelatedStrength, SavedNote, SearchResult } from "./types.js";
 
 export interface StoragePaths {
   notesDir: string;
@@ -113,6 +113,56 @@ export class NoteStore {
       created_at: timestamp,
       updated_at: timestamp
     });
+  }
+
+  getDraft(noteId: number): NoteDraft | undefined {
+    const row = this.db.prepare("SELECT * FROM notes WHERE id = ?").get(noteId) as NoteRow | undefined;
+    if (!row) {
+      return undefined;
+    }
+
+    const metadata = parseMetadataJson(row.metadata_json, row.raw_content) ?? normalizeMetadata({
+      title: row.title,
+      summary: row.summary,
+      type: row.note_type,
+      tags: this.tagsForNote(row.id),
+      topics: [],
+      entities: [],
+      dates: []
+    }, row.raw_content);
+
+    return {
+      raw: row.raw_content,
+      metadata: {
+        ...metadata,
+        title: row.title,
+        summary: row.summary,
+        type: row.note_type as NoteMetadata["type"]
+      },
+      ...(row.processed_content ? { processed: row.processed_content } : {})
+    };
+  }
+
+  getNote(noteId: number): SavedNote | undefined {
+    const row = this.db.prepare("SELECT * FROM notes WHERE id = ?").get(noteId) as NoteRow | undefined;
+    return row ? rowToSavedNote(row) : undefined;
+  }
+
+  resolveNoteCandidates(query: string): NoteResolutionCandidate[] {
+    const trimmed = query.trim();
+    if (!trimmed) {
+      return [];
+    }
+
+    const exact = this.exactNoteCandidates(trimmed);
+    if (exact.length > 0) {
+      return exact;
+    }
+
+    return this.relatedToQuery(trimmed).slice(0, 6).map((result) => ({
+      ...result,
+      exact: false
+    }));
   }
 
   updateDraft(noteId: number, draft: NoteDraft, now = new Date()): SavedNote {
@@ -306,6 +356,53 @@ export class NoteStore {
       .filter((result): result is RelatedResult => result !== undefined)
       .sort((left, right) => right.score - left.score || right.updatedAt.localeCompare(left.updatedAt))
       .slice(0, 12);
+  }
+
+  private exactNoteCandidates(query: string): NoteResolutionCandidate[] {
+    const rows = this.db.prepare("SELECT * FROM notes ORDER BY updated_at DESC").all() as NoteRow[];
+    const normalizedQuery = query.toLowerCase();
+    const numericId = /^\d+$/.test(query) ? Number.parseInt(query, 10) : undefined;
+    const queryPath = path.resolve(query);
+    const queryBasename = path.basename(query).toLowerCase();
+    const queryBasenameWithoutExt = path.basename(query, path.extname(query)).toLowerCase();
+
+    const candidates = new Map<number, NoteResolutionCandidate>();
+    const add = (row: NoteRow, reason: string): void => {
+      const existing = candidates.get(row.id);
+      if (existing) {
+        existing.reasons.push(reason);
+        return;
+      }
+      candidates.set(row.id, {
+        ...rowToSavedNote(row),
+        tags: this.tagsForNote(row.id),
+        snippet: makeSnippet(row.raw_content, query),
+        score: 100,
+        reasons: [reason],
+        exact: true
+      });
+    };
+
+    for (const row of rows) {
+      if (numericId !== undefined && row.id === numericId) {
+        add(row, "exact id match");
+      }
+
+      const markdownPath = path.resolve(row.markdown_path);
+      const basename = path.basename(row.markdown_path).toLowerCase();
+      const basenameWithoutExt = path.basename(row.markdown_path, path.extname(row.markdown_path)).toLowerCase();
+      if (markdownPath === queryPath || row.markdown_path === query) {
+        add(row, "exact path match");
+      } else if (basename === queryBasename || basenameWithoutExt === queryBasenameWithoutExt) {
+        add(row, "exact filename match");
+      }
+
+      if (row.title.toLowerCase() === normalizedQuery) {
+        add(row, "exact title match");
+      }
+    }
+
+    return Array.from(candidates.values());
   }
 
   private migrate(): void {

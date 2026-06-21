@@ -6,6 +6,8 @@ export type SlashCommandName =
   | "tag"
   | "summary"
   | "search"
+  | "amend"
+  | "edit"
   | "related"
   | "decisions"
   | "gaps"
@@ -45,6 +47,8 @@ export const slashCommands: SlashCommandName[] = [
   "tag",
   "summary",
   "search",
+  "amend",
+  "edit",
   "related",
   "decisions",
   "gaps",
@@ -106,6 +110,8 @@ export function helpText(): string {
     "/tag - regenerate tags only; /metadata is preferred for full metadata",
     "/summary - create a short summary",
     "/search <query> - search stored notes",
+    "/amend <query> - append a dated update to an existing saved note",
+    "/edit <query> - edit the raw capture of an existing saved note",
     "/related [query] - find saved notes related to the current note or supplied query",
     "/decisions <query> - synthesize decisions and rationale from related notes",
     "/gaps <query> - find unexplained terms and entities in related notes",

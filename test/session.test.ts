@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 import { NoteSession } from "../src/session.js";
 import { NoteStore } from "../src/storage.js";
@@ -395,6 +396,188 @@ test("saving the same session updates the current note instead of duplicating it
     assert.equal(fs.readdirSync(path.join(dir, "notes")).length, 1);
     assert.match(fs.readFileSync(first.markdownPath, "utf8"), /Add budget details/);
     assert.equal(session.search("budget").length, 1);
+  } finally {
+    store.close();
+  }
+});
+
+test("resolves notes by exact id and dominant deterministic candidate", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "logbook-session-resolve-"));
+  const store = new NoteStore({
+    notesDir: path.join(dir, "notes"),
+    dbPath: path.join(dir, ".logbook", "logbook.sqlite")
+  });
+  const session = new NoteSession(store);
+
+  try {
+    const haru = store.saveDraft({
+      raw: "Haru medicine schedule and refill notes.",
+      metadata: {
+        title: "Haru Medicine",
+        tags: ["pet-care"],
+        topics: [],
+        entities: [{ name: "Haru", type: "other" }],
+        dates: [],
+        summary: "Medicine schedule.",
+        type: "scratchpad"
+      }
+    });
+    store.saveDraft({
+      raw: "Generic medicine cabinet inventory.",
+      metadata: {
+        title: "Medicine Cabinet",
+        tags: [],
+        topics: [],
+        entities: [],
+        dates: [],
+        summary: "Cabinet inventory.",
+        type: "scratchpad"
+      }
+    });
+
+    const byId = await session.resolveNote(String(haru.id));
+    assert.equal(byId.selected?.id, haru.id);
+
+    const dominant = await session.resolveNote("haru");
+    assert.equal(dominant.selected?.id, haru.id);
+  } finally {
+    store.close();
+  }
+});
+
+test("ambiguous deterministic note resolution returns candidates without selecting", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "logbook-session-resolve-ambiguous-"));
+  const store = new NoteStore({
+    notesDir: path.join(dir, "notes"),
+    dbPath: path.join(dir, ".logbook", "logbook.sqlite")
+  });
+  const session = new NoteSession(store);
+
+  try {
+    store.saveDraft({
+      raw: "Launch checklist for product beta.",
+      metadata: {
+        title: "Product Launch",
+        tags: [],
+        topics: [],
+        entities: [],
+        dates: [],
+        summary: "Launch checklist.",
+        type: "meeting"
+      }
+    });
+    store.saveDraft({
+      raw: "Launch checklist for marketing beta.",
+      metadata: {
+        title: "Marketing Launch",
+        tags: [],
+        topics: [],
+        entities: [],
+        dates: [],
+        summary: "Launch checklist.",
+        type: "meeting"
+      }
+    });
+
+    const resolution = await session.resolveNote("launch");
+    assert.equal(resolution.selected, undefined);
+    assert.equal(resolution.candidates.length, 2);
+    assert.match(resolution.llmSkippedReason ?? "", /provider is not configured/);
+  } finally {
+    store.close();
+  }
+});
+
+test("appendToExistingNote appends a dated update to the same note and preserves title", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "logbook-session-amend-"));
+  const dbPath = path.join(dir, ".logbook", "logbook.sqlite");
+  const store = new NoteStore({
+    notesDir: path.join(dir, "notes"),
+    dbPath
+  });
+  const session = new NoteSession(store);
+
+  try {
+    const saved = store.saveDraft({
+      raw: "Initial launch checklist.",
+      metadata: {
+        title: "Launch Checklist",
+        tags: ["launch"],
+        topics: [],
+        entities: [],
+        dates: [],
+        summary: "Initial launch notes.",
+        type: "meeting"
+      },
+      processed: "Organized launch checklist."
+    }, new Date("2026-06-19T12:00:00Z"));
+
+    const updated = await session.appendToExistingNote(saved.id, "Added rollout owner.", new Date("2026-06-20T12:00:00Z"));
+
+    assert.equal(updated.id, saved.id);
+    assert.equal(updated.markdownPath, saved.markdownPath);
+    assert.equal(updated.title, "Launch Checklist");
+    const markdown = fs.readFileSync(saved.markdownPath, "utf8");
+    assert.match(markdown, /Initial launch checklist\./);
+    assert.match(markdown, /## Update 2026-06-20/);
+    assert.match(markdown, /Added rollout owner\./);
+    assert.equal(session.search("rollout").length, 1);
+
+    const db = new DatabaseSync(dbPath);
+    try {
+      const row = db.prepare("SELECT COUNT(*) AS count FROM note_versions WHERE note_id = ?").get(saved.id) as { count: number };
+      assert.equal(row.count, 2);
+    } finally {
+      db.close();
+    }
+  } finally {
+    store.close();
+  }
+});
+
+test("replaceExistingNote replaces raw capture, clears processed content, and preserves title", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "logbook-session-edit-"));
+  const dbPath = path.join(dir, ".logbook", "logbook.sqlite");
+  const store = new NoteStore({
+    notesDir: path.join(dir, "notes"),
+    dbPath
+  });
+  const session = new NoteSession(store);
+
+  try {
+    const saved = store.saveDraft({
+      raw: "Initial launch checklist.",
+      metadata: {
+        title: "Launch Checklist",
+        tags: ["launch"],
+        topics: [],
+        entities: [],
+        dates: [],
+        summary: "Initial launch notes.",
+        type: "meeting"
+      },
+      processed: "Organized launch checklist."
+    }, new Date("2026-06-19T12:00:00Z"));
+
+    const updated = await session.replaceExistingNote(saved.id, "Replacement budget details.");
+
+    assert.equal(updated.id, saved.id);
+    assert.equal(updated.markdownPath, saved.markdownPath);
+    assert.equal(updated.title, "Launch Checklist");
+    assert.equal(session.search("launch").length, 1);
+    assert.equal(session.search("budget").length, 1);
+    assert.match(fs.readFileSync(saved.markdownPath, "utf8"), /Replacement budget details\./);
+
+    const draft = store.getDraft(saved.id);
+    assert.equal(draft?.processed, undefined);
+
+    const db = new DatabaseSync(dbPath);
+    try {
+      const row = db.prepare("SELECT processed_content FROM notes WHERE id = ?").get(saved.id) as { processed_content: string | null };
+      assert.equal(row.processed_content, null);
+    } finally {
+      db.close();
+    }
   } finally {
     store.close();
   }
