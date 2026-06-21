@@ -93,3 +93,7 @@ logbook index
 ```
 
 Captured notes autosave after 2 seconds of input inactivity. Autosave creates the note on first save, then updates the same Markdown file and SQLite note while you keep working.
+
+---
+
+Heads up: large parts of this codebase (and this README) are AI slop — generated with Codex. Read before you trust.
