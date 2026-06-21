@@ -446,7 +446,7 @@ const relatedRerankResponseSchema = z.object({
   results: cappedArray(z.object({
     id: z.number().int(),
     relevance: relevanceSchema,
-    strength: z.enum(["Strong", "Moderate", "Weak"]),
+    strength: z.enum(["Strong", "Moderate", "Weak", "Unrelated"]),
     explanation: nonEmptyBoundedString(240)
   }).strict(), 20)
 }).strict();
@@ -663,11 +663,16 @@ function parseRerankResponse(content: string): Array<{ id: number; relevance: nu
   const parsed = relatedRerankResponseSchema.parse(JSON.parse(content));
 
   return parsed.results.flatMap((item) => {
-    if (isUnrelatedRerankItem(item)) {
+    if (item.strength === "Unrelated" || isUnrelatedRerankItem(item)) {
       return [];
     }
 
-    return [item];
+    return [{
+      id: item.id,
+      relevance: item.relevance,
+      strength: item.strength,
+      explanation: item.explanation
+    }];
   });
 }
 

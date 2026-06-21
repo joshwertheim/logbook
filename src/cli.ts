@@ -216,8 +216,12 @@ async function main(): Promise<void> {
             }
             output.write("Opening current raw capture in your editor. Save and exit to preview changes.\n");
             rl.pause();
-            const edited = await editRawCapture(draft.raw);
-            rl.resume();
+            let edited: string;
+            try {
+              edited = await editRawCapture(draft.raw);
+            } finally {
+              rl.resume();
+            }
             pendingWrite = { kind: "edit", target: resolution.selected, raw: edited };
             output.write(formatPendingWrite(pendingWrite));
             break;

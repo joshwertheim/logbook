@@ -165,8 +165,8 @@ class UnrelatedRerankProvider implements LlmProvider {
           results: parsed.untrustedNotes.map((candidate) => ({
             id: candidate.id,
             relevance: 5,
-            strength: "Weak",
-            explanation: "Unrelated to the source note."
+            strength: "Unrelated",
+            explanation: "Not related to the source note."
           }))
         })
       };
