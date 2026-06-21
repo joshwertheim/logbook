@@ -118,6 +118,12 @@ async function main(): Promise<void> {
         continue;
       }
 
+      if (parsed.kind === "unknown-command") {
+        output.write(`Unknown command: ${parsed.command}. Type /help for commands.\n`);
+        writePrompt();
+        continue;
+      }
+
       if (parsed.name === "quit") {
         if (autosaveTimer) {
           runAutosave();

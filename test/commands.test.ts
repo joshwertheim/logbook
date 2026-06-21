@@ -109,10 +109,14 @@ test("parses index command", () => {
   assert.match(helpText(), /\/index/);
 });
 
-test("treats unknown slash commands as note input", () => {
+test("treats unknown slash commands as command errors", () => {
   assert.deepEqual(parseInput("/unknown value"), {
-    kind: "input",
-    text: "/unknown value"
+    kind: "unknown-command",
+    command: "/unknown"
+  });
+  assert.deepEqual(parseInput("/relate something"), {
+    kind: "unknown-command",
+    command: "/relate"
   });
 });
 

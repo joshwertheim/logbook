@@ -28,7 +28,12 @@ export interface NoteInput {
   text: string;
 }
 
-export type ParsedInput = SlashCommand | NoteInput;
+export interface UnknownCommandInput {
+  kind: "unknown-command";
+  command: string;
+}
+
+export type ParsedInput = SlashCommand | NoteInput | UnknownCommandInput;
 
 export const slashCommands: SlashCommandName[] = [
   "new",
@@ -60,12 +65,12 @@ export function parseInput(input: string): ParsedInput {
   const trimmed = input.trim();
   const match = /^\/([a-z]+)(?:\s+(.*))?$/.exec(trimmed);
   if (!match) {
-    return { kind: "input", text: input };
+    return { kind: "unknown-command", command: input };
   }
 
   const name = match[1] as SlashCommandName;
   if (!commands.has(name)) {
-    return { kind: "input", text: input };
+    return { kind: "unknown-command", command: `/${name}` };
   }
 
   return {
