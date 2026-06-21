@@ -1,9 +1,11 @@
 import { organizationPrompt, noteTakingSystemPrompt } from "./prompts.js";
 import { generateSummary, generateTags, extractMetadata, fallbackMetadata, fallbackSummary, fallbackTags, refreshMetadata } from "./metadata.js";
-import type { AnalysisConfidence, CheckResult, DecisionAnalysisItem, DecisionAnalysisResult, GapAnalysisItem, GapAnalysisResult, LlmProvider, NoteDraft, NoteMetadata, NoteResolutionCandidate, NoteResolutionResult, RelatedLookupResult, RelatedResult, RelatedStrength, SavedNote, SearchResult } from "./types.js";
+import { cappedArray, llmEnvelope, nonEmptyBoundedString, untrustedNoteRules } from "./llmSafety.js";
+import type { CheckResult, DecisionAnalysisItem, DecisionAnalysisResult, GapAnalysisItem, GapAnalysisResult, LlmProvider, NoteDraft, NoteMetadata, NoteResolutionCandidate, NoteResolutionResult, RelatedLookupResult, RelatedResult, RelatedStrength, SavedNote, SearchResult } from "./types.js";
 import type { DateCheckQuery } from "./check.js";
 import { ProviderConfigError } from "./provider.js";
 import { NoteStore } from "./storage.js";
+import { z } from "zod";
 
 export interface RelatedRequest {
   query?: string;
@@ -67,7 +69,14 @@ export class NoteSession {
       temperature: 0.25,
       messages: [
         { role: "system", content: noteTakingSystemPrompt },
-        { role: "user", content: `${organizationPrompt}\n\nNote:\n${this.raw}` }
+        {
+          role: "user",
+          content: llmEnvelope({
+            task: organizationPrompt,
+            rules: untrustedNoteRules,
+            untrustedNote: this.raw
+          })
+        }
       ]
     });
     this.processed = response.content.trim();
@@ -371,10 +380,11 @@ async function analyzeDecisions(query: string, candidates: RelatedResult[], prov
       },
       {
         role: "user",
-        content: JSON.stringify({
+        content: llmEnvelope({
           task: "Find explicit or strongly implied decisions related to the query. Group the same decision across notes. Include rationale only when supported by the notes. Return {\"decisions\":[{\"decision\":\"short decision\",\"rationale\":\"why this decision appears to have been made\",\"status\":\"optional current state\",\"confidence\":\"High|Medium|Low\",\"relatedNoteIds\":[number]}]}. If no decisions are supported, return {\"decisions\":[]}.",
+          rules: untrustedNoteRules,
           query,
-          notes: candidates.map(candidateForAnalysis)
+          untrustedNotes: candidates.map(candidateForAnalysis)
         })
       }
     ]
@@ -394,10 +404,11 @@ async function analyzeGaps(query: string, candidates: RelatedResult[], provider:
       },
       {
         role: "user",
-        content: JSON.stringify({
+        content: llmEnvelope({
           task: "Find important terms, entities, acronyms, or project names related to the query that are mentioned but not explained or defined in the provided notes. Do not include common words or concepts explained in the notes. Return {\"gaps\":[{\"term\":\"term\",\"whyItMatters\":\"why it matters for understanding these notes\",\"evidence\":\"brief note-based evidence that it is mentioned but not explained\",\"suggestedQuestion\":\"question to answer later\",\"relatedNoteIds\":[number]}]}. If no gaps are supported, return {\"gaps\":[]}.",
+          rules: untrustedNoteRules,
           query,
-          notes: candidates.map(candidateForAnalysis)
+          untrustedNotes: candidates.map(candidateForAnalysis)
         })
       }
     ]
@@ -421,69 +432,77 @@ function candidateForAnalysis(candidate: RelatedResult): Record<string, unknown>
   };
 }
 
+const relevanceSchema = z.number().finite().transform((value) => Math.max(0, Math.min(100, value)));
+
+const resolutionRerankResponseSchema = z.object({
+  results: cappedArray(z.object({
+    id: z.number().int(),
+    relevance: relevanceSchema,
+    explanation: nonEmptyBoundedString(240)
+  }).strict(), 20)
+}).strict();
+
+const relatedRerankResponseSchema = z.object({
+  results: cappedArray(z.object({
+    id: z.number().int(),
+    relevance: relevanceSchema,
+    strength: z.enum(["Strong", "Moderate", "Weak"]),
+    explanation: nonEmptyBoundedString(240)
+  }).strict(), 20)
+}).strict();
+
+const decisionAnalysisResponseSchema = z.object({
+  decisions: cappedArray(z.object({
+    decision: nonEmptyBoundedString(240),
+    rationale: nonEmptyBoundedString(500),
+    status: nonEmptyBoundedString(240).optional(),
+    confidence: z.enum(["High", "Medium", "Low"]),
+    relatedNoteIds: cappedArray(z.number().int(), 12)
+  }).strict(), 12)
+}).strict();
+
+const gapAnalysisResponseSchema = z.object({
+  gaps: cappedArray(z.object({
+    term: nonEmptyBoundedString(120),
+    whyItMatters: nonEmptyBoundedString(500),
+    evidence: nonEmptyBoundedString(500),
+    suggestedQuestion: nonEmptyBoundedString(240),
+    relatedNoteIds: cappedArray(z.number().int(), 12)
+  }).strict(), 12)
+}).strict();
+
 function parseDecisionAnalysisResponse(content: string, candidates: RelatedResult[]): DecisionAnalysisItem[] {
-  const parsed = JSON.parse(content) as unknown;
-  if (!isRecord(parsed) || !Array.isArray(parsed.decisions)) {
-    throw new Error("LLM decisions response did not include decisions.");
-  }
+  const parsed = decisionAnalysisResponseSchema.parse(JSON.parse(content));
 
   const candidateIds = new Set(candidates.map((candidate) => candidate.id));
   return parsed.decisions.flatMap((item) => {
-    if (!isRecord(item)) {
-      return [];
-    }
-    const decision = cleanString(item.decision);
-    const rationale = cleanString(item.rationale);
-    if (!decision || !rationale) {
-      return [];
-    }
-
     const relatedNoteIds = normalizeRelatedNoteIds(item.relatedNoteIds, candidateIds);
     if (relatedNoteIds.length === 0) {
       return [];
     }
 
-    const status = cleanString(item.status);
     return [{
-      decision,
-      rationale,
-      ...(status ? { status } : {}),
-      confidence: normalizeAnalysisConfidence(item.confidence),
+      decision: item.decision,
+      rationale: item.rationale,
+      ...(item.status ? { status: item.status } : {}),
+      confidence: item.confidence,
       relatedNoteIds
     }];
   });
 }
 
 function parseGapAnalysisResponse(content: string, candidates: RelatedResult[]): GapAnalysisItem[] {
-  const parsed = JSON.parse(content) as unknown;
-  if (!isRecord(parsed) || !Array.isArray(parsed.gaps)) {
-    throw new Error("LLM gaps response did not include gaps.");
-  }
+  const parsed = gapAnalysisResponseSchema.parse(JSON.parse(content));
 
   const candidateIds = new Set(candidates.map((candidate) => candidate.id));
   return parsed.gaps.flatMap((item) => {
-    if (!isRecord(item)) {
-      return [];
-    }
-    const term = cleanString(item.term);
-    const whyItMatters = cleanString(item.whyItMatters);
-    const evidence = cleanString(item.evidence);
-    const suggestedQuestion = cleanString(item.suggestedQuestion);
-    if (!term || !whyItMatters || !evidence || !suggestedQuestion) {
-      return [];
-    }
-
     const relatedNoteIds = normalizeRelatedNoteIds(item.relatedNoteIds, candidateIds);
     if (relatedNoteIds.length === 0) {
       return [];
     }
 
-    return [{ term, whyItMatters, evidence, suggestedQuestion, relatedNoteIds }];
+    return [{ ...item, relatedNoteIds }];
   });
-}
-
-function cleanString(value: unknown): string | undefined {
-  return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
 
 function normalizeRelatedNoteIds(value: unknown, candidateIds: Set<number>): number[] {
@@ -501,13 +520,6 @@ function normalizeRelatedNoteIds(value: unknown, candidateIds: Set<number>): num
     ids.push(item);
   }
   return ids;
-}
-
-function normalizeAnalysisConfidence(value: unknown): AnalysisConfidence {
-  if (value === "High" || value === "Medium" || value === "Low") {
-    return value;
-  }
-  return "Medium";
 }
 
 function dominantCandidate(candidates: NoteResolutionCandidate[]): NoteResolutionCandidate | undefined {
@@ -533,10 +545,11 @@ async function rerankResolutionCandidates(candidates: NoteResolutionCandidate[],
       },
       {
         role: "user",
-        content: JSON.stringify({
+        content: llmEnvelope({
           task: "Rerank note candidates for the query. Omit unrelated candidates. Return {\"results\":[{\"id\":number,\"relevance\":number,\"explanation\":\"short reason\"}]}",
+          rules: untrustedNoteRules,
           query,
-          candidates: candidates.map((candidate) => ({
+          untrustedNotes: candidates.map((candidate) => ({
             id: candidate.id,
             title: candidate.title,
             path: candidate.markdownPath,
@@ -572,22 +585,13 @@ async function rerankResolutionCandidates(candidates: NoteResolutionCandidate[],
 }
 
 function parseResolutionRerankResponse(content: string): Array<{ id: number; relevance: number; explanation: string }> {
-  const parsed = JSON.parse(content) as unknown;
-  if (!isRecord(parsed) || !Array.isArray(parsed.results)) {
-    throw new Error("LLM note resolution response did not include results.");
-  }
+  const parsed = resolutionRerankResponseSchema.parse(JSON.parse(content));
 
   return parsed.results.flatMap((item) => {
-    if (!isRecord(item) || typeof item.id !== "number" || isUnrelatedRerankItem(item)) {
+    if (isUnrelatedRerankItem(item)) {
       return [];
     }
-    const relevance = typeof item.relevance === "number" && Number.isFinite(item.relevance)
-      ? item.relevance
-      : 0;
-    const explanation = typeof item.explanation === "string" && item.explanation.trim()
-      ? item.explanation.trim()
-      : "Selected from deterministic note candidates.";
-    return [{ id: item.id, relevance, explanation }];
+    return [item];
   });
 }
 
@@ -609,10 +613,11 @@ async function rerankRelatedResults(candidates: RelatedResult[], source: string,
       },
       {
         role: "user",
-        content: JSON.stringify({
+        content: llmEnvelope({
           task: "Rerank related notes for the source text. Omit unrelated candidates entirely. Return {\"results\":[{\"id\":number,\"relevance\":number,\"strength\":\"Strong|Moderate|Weak\",\"explanation\":\"short reason\"}]}",
-          source,
-          candidates: candidates.map((candidate) => ({
+          rules: untrustedNoteRules,
+          untrustedNote: source,
+          untrustedNotes: candidates.map((candidate) => ({
             id: candidate.id,
             title: candidate.title,
             summary: candidate.summary,
@@ -655,28 +660,14 @@ async function rerankRelatedResults(candidates: RelatedResult[], source: string,
 }
 
 function parseRerankResponse(content: string): Array<{ id: number; relevance: number; strength: RelatedStrength; explanation: string }> {
-  const parsed = JSON.parse(content) as unknown;
-  if (!isRecord(parsed) || !Array.isArray(parsed.results)) {
-    throw new Error("LLM rerank response did not include results.");
-  }
+  const parsed = relatedRerankResponseSchema.parse(JSON.parse(content));
 
   return parsed.results.flatMap((item) => {
-    if (!isRecord(item) || typeof item.id !== "number") {
-      return [];
-    }
-
-    const relevance = typeof item.relevance === "number" && Number.isFinite(item.relevance)
-      ? item.relevance
-      : 0;
     if (isUnrelatedRerankItem(item)) {
       return [];
     }
 
-    const strength = normalizeStrength(item.strength, relevance);
-    const explanation = typeof item.explanation === "string" && item.explanation.trim()
-      ? item.explanation.trim()
-      : "Related by deterministic signals.";
-    return [{ id: item.id, relevance, strength, explanation }];
+    return [item];
   });
 }
 
@@ -724,7 +715,7 @@ function hasSpecificKeywordOverlap(reason: string): boolean {
   return terms.some((term) => !genericRelatedKeywords.has(term));
 }
 
-function isUnrelatedRerankItem(item: Record<string, unknown>): boolean {
+function isUnrelatedRerankItem(item: { strength?: unknown; relevanceClass?: unknown; relevance_class?: unknown; explanation?: unknown }): boolean {
   return isUnrelatedValue(item.strength)
     || isUnrelatedValue(item.relevanceClass)
     || isUnrelatedValue(item.relevance_class)
@@ -743,19 +734,6 @@ function hasUnrelatedExplanation(reasons: string[]): boolean {
       || /\bdoes\s+not\s+(?:discuss|mention|address|answer|connect|relate)\b/.test(normalized)
       || /\bmentions?\b.+\bnot\b.+\b(?:work|hours|schedule|relevant|responsive|about)\b/.test(normalized);
   });
-}
-
-function normalizeStrength(value: unknown, relevance: number): RelatedStrength {
-  if (value === "Strong" || value === "Moderate" || value === "Weak") {
-    return value;
-  }
-  if (relevance >= 70) {
-    return "Strong";
-  }
-  if (relevance >= 40) {
-    return "Moderate";
-  }
-  return "Weak";
 }
 
 function capStrength(strength: RelatedStrength, maximum: RelatedStrength): RelatedStrength {

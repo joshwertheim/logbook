@@ -1,5 +1,7 @@
 import { metadataExtractionPrompt, noteTakingSystemPrompt, summaryPrompt, tagsPrompt } from "./prompts.js";
+import { boundedString, cappedArray, clampText, llmEnvelope, untrustedNoteRules } from "./llmSafety.js";
 import type { EntityType, LlmProvider, NoteEntity, NoteMetadata, NoteType } from "./types.js";
+import { z } from "zod";
 
 const noteTypes = new Set<NoteType>(["idea", "journal", "task list", "meeting", "research", "scratchpad"]);
 const entityTypes = new Set<EntityType>(["organization", "person", "place", "security", "account", "project", "goal", "event", "product", "other"]);
@@ -30,10 +32,17 @@ export async function extractMetadata(raw: string, provider?: LlmProvider): Prom
       temperature: 0.1,
       messages: [
         { role: "system", content: noteTakingSystemPrompt },
-        { role: "user", content: `${metadataExtractionPrompt}\n\nNote:\n${raw}` }
+        {
+          role: "user",
+          content: llmEnvelope({
+            task: metadataExtractionPrompt,
+            rules: untrustedNoteRules,
+            untrustedNote: raw
+          })
+        }
       ]
     });
-    return normalizeMetadata(JSON.parse(response.content), raw);
+    return normalizeMetadata(metadataResponseSchema.parse(JSON.parse(response.content)), raw);
   } catch {
     return fallbackMetadata(raw);
   }
@@ -44,10 +53,17 @@ export async function generateSummary(raw: string, provider: LlmProvider): Promi
     temperature: 0.2,
     messages: [
       { role: "system", content: noteTakingSystemPrompt },
-      { role: "user", content: `${summaryPrompt}\n\nNote:\n${raw}` }
+      {
+        role: "user",
+        content: llmEnvelope({
+          task: summaryPrompt,
+          rules: untrustedNoteRules,
+          untrustedNote: raw
+        })
+      }
     ]
   });
-  return response.content.trim();
+  return clampText(response.content, 360);
 }
 
 export function fallbackSummary(raw: string): string {
@@ -81,10 +97,17 @@ export async function generateTags(raw: string, provider: LlmProvider): Promise<
     temperature: 0.1,
     messages: [
       { role: "system", content: noteTakingSystemPrompt },
-      { role: "user", content: `${tagsPrompt}\n\nNote:\n${raw}` }
+      {
+        role: "user",
+        content: llmEnvelope({
+          task: tagsPrompt,
+          rules: untrustedNoteRules,
+          untrustedNote: raw
+        })
+      }
     ]
   });
-  const parsed = JSON.parse(response.content) as { tags?: unknown };
+  const parsed = tagsResponseSchema.parse(JSON.parse(response.content));
   return normalizeTags(parsed.tags);
 }
 
@@ -109,6 +132,23 @@ export function normalizeMetadata(value: unknown, raw = ""): NoteMetadata {
     type
   };
 }
+
+const metadataResponseSchema = z.object({
+  title: boundedString(120).optional(),
+  tags: cappedArray(boundedString(40), 12).optional(),
+  topics: cappedArray(boundedString(80), 10).optional(),
+  entities: cappedArray(z.object({
+    name: boundedString(120),
+    type: z.enum(["organization", "person", "place", "security", "account", "project", "goal", "event", "product", "other"]).catch("other")
+  }).strict(), 16).optional(),
+  dates: cappedArray(boundedString(40), 16).optional(),
+  summary: boundedString(360).optional(),
+  type: z.enum(["idea", "journal", "task list", "meeting", "research", "scratchpad"]).optional()
+}).strict();
+
+const tagsResponseSchema = z.object({
+  tags: cappedArray(boundedString(40), 12)
+}).strict();
 
 export function normalizeTags(value: unknown): string[] {
   return normalizeStringArray(value)

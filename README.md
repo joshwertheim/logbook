@@ -71,16 +71,22 @@ ${LLM_BASE_URL}/chat/completions
 
 The request includes the configured `LLM_MODEL`, a `messages` array, a temperature, and, for JSON tasks, `response_format: { "type": "json_object" }`. Requests are authenticated with `Authorization: Bearer ${LLM_API_KEY}`.
 
+User note text is sent inside JSON prompt envelopes such as `untrustedNote` or `untrustedNotes`, separate from the trusted `task` and `rules` fields. The rules tell the model to treat note text as data and ignore instructions inside notes that try to change roles, reveal prompts, alter schemas, or override the task.
+
+Before outbound LLM calls, Logbook redacts common PII patterns in the prompt payload, including likely emails, phone numbers, SSNs, credit-card-like numbers, API-key/token-looking strings, and bearer tokens. Redaction uses stable placeholders per request, such as `[REDACTED_EMAIL_1]`. Saved Markdown and SQLite raw note content are not redacted or mutated.
+
+JSON responses are validated with runtime schemas before normalization. String lengths and array sizes are bounded, extra fields and malformed shapes are rejected, and deterministic fallback behavior is used where available, such as metadata extraction and reranking.
+
 LLM calls happen in these cases:
 
-- Capturing note text starts a background metadata extraction call when a provider is configured. The raw note is sent with a metadata prompt, and the model returns JSON for title, tags, topics, entities, dates, summary, and type. If this fails, Logbook keeps a local fallback title, summary, dates, and inferred type.
+- Capturing note text starts a background metadata extraction call when a provider is configured. The raw note is sent as `untrustedNote` with a metadata task, and the model returns JSON for title, tags, topics, entities, dates, summary, and type. If this fails, Logbook keeps a local fallback title, summary, dates, and inferred type.
 - `/metadata` runs the same metadata extraction call immediately and updates the current draft.
-- `/summary` sends the raw note with a summary prompt and stores the returned summary. If the call fails, Logbook falls back to a local first-line summary.
-- `/tag` sends the raw note with a tag-generation prompt and expects JSON shaped like `{ "tags": [...] }`. If the call fails, Logbook falls back to local keyword tags.
-- `/process` sends the raw note with an organization prompt and stores the returned organized version. This command requires a configured provider.
-- `/related [query]` first finds deterministic candidates locally, then asks the model to rerank those candidates as JSON. If no provider is configured or reranking fails, Logbook returns the deterministic ranking and prints why LLM reranking was skipped.
-- `/decisions <query>` first finds deterministic candidates locally, then asks the model to synthesize supported decisions, rationale, and related note references as JSON. This command requires a configured provider when matching notes exist.
-- `/gaps <query>` first finds deterministic candidates locally, then asks the model to identify important unexplained terms, entities, acronyms, or project names as JSON. This command requires a configured provider when matching notes exist.
+- `/summary` sends the raw note as `untrustedNote` with a summary task and stores the returned summary. If the call fails, Logbook falls back to a local first-line summary.
+- `/tag` sends the raw note as `untrustedNote` with a tag-generation task and expects JSON shaped like `{ "tags": [...] }`. If the call fails, Logbook falls back to local keyword tags.
+- `/process` sends the raw note as `untrustedNote` with an organization task and stores the returned organized version. This command requires a configured provider.
+- `/related [query]` first finds deterministic candidates locally, then asks the model to rerank those candidates as `untrustedNotes` JSON. If no provider is configured or reranking fails, Logbook returns the deterministic ranking and prints why LLM reranking was skipped.
+- `/decisions <query>` first finds deterministic candidates locally, then asks the model to synthesize supported decisions, rationale, and related note references from `untrustedNotes` JSON. This command requires a configured provider when matching notes exist.
+- `/gaps <query>` first finds deterministic candidates locally, then asks the model to identify important unexplained terms, entities, acronyms, or project names from `untrustedNotes` JSON. This command requires a configured provider when matching notes exist.
 
 These commands do not call the LLM provider: `/save`, autosave, `/new`, `/search`, `/check`, `/index`, `/provider`, `/compose`, `/help`, and `/quit`.
 

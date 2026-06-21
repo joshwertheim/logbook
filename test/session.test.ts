@@ -31,6 +31,25 @@ class MockProvider implements LlmProvider {
   }
 }
 
+class RecordingSessionProvider implements LlmProvider {
+  requests: LlmRequest[] = [];
+
+  async complete(request: LlmRequest): Promise<{ content: string }> {
+    this.requests.push(request);
+    return {
+      content: JSON.stringify({
+        title: "Contact Note",
+        tags: ["contact"],
+        topics: [],
+        entities: [],
+        dates: [],
+        summary: "Contact details.",
+        type: "scratchpad"
+      })
+    };
+  }
+}
+
 class FailingProvider implements LlmProvider {
   async complete(): Promise<{ content: string }> {
     throw new Error("LLM request failed with 429: insufficient_quota");
@@ -71,12 +90,12 @@ class RerankProvider implements LlmProvider {
   async complete(request: LlmRequest): Promise<{ content: string }> {
     const prompt = request.messages.at(-1)?.content ?? "";
     if (prompt.includes("Rerank related notes")) {
-      const parsed = JSON.parse(prompt) as { candidates: Array<{ id: number }> };
+      const parsed = JSON.parse(prompt) as { untrustedNotes: Array<{ id: number }> };
       return {
         content: JSON.stringify({
           results: [
             {
-              id: parsed.candidates[0]?.id,
+              id: parsed.untrustedNotes[0]?.id,
               relevance: 95,
               strength: "Strong",
               explanation: "Both notes are about the launch plan."
@@ -93,10 +112,10 @@ class StrongAllRerankProvider implements LlmProvider {
   async complete(request: LlmRequest): Promise<{ content: string }> {
     const prompt = request.messages.at(-1)?.content ?? "";
     if (prompt.includes("Rerank related notes")) {
-      const parsed = JSON.parse(prompt) as { candidates: Array<{ id: number }> };
+      const parsed = JSON.parse(prompt) as { untrustedNotes: Array<{ id: number }> };
       return {
         content: JSON.stringify({
-          results: parsed.candidates.map((candidate) => ({
+          results: parsed.untrustedNotes.map((candidate) => ({
             id: candidate.id,
             relevance: 95,
             strength: "Strong",
@@ -113,10 +132,10 @@ class WorkHoursRerankProvider implements LlmProvider {
   async complete(request: LlmRequest): Promise<{ content: string }> {
     const prompt = request.messages.at(-1)?.content ?? "";
     if (prompt.includes("Rerank related notes")) {
-      const parsed = JSON.parse(prompt) as { candidates: Array<{ id: number; title: string }> };
+      const parsed = JSON.parse(prompt) as { untrustedNotes: Array<{ id: number; title: string }> };
       return {
         content: JSON.stringify({
-          results: parsed.candidates.map((candidate) => candidate.title === "Work and Well-being"
+          results: parsed.untrustedNotes.map((candidate) => candidate.title === "Work and Well-being"
             ? {
                 id: candidate.id,
                 relevance: 55,
@@ -140,10 +159,10 @@ class UnrelatedRerankProvider implements LlmProvider {
   async complete(request: LlmRequest): Promise<{ content: string }> {
     const prompt = request.messages.at(-1)?.content ?? "";
     if (prompt.includes("Rerank related notes")) {
-      const parsed = JSON.parse(prompt) as { candidates: Array<{ id: number }> };
+      const parsed = JSON.parse(prompt) as { untrustedNotes: Array<{ id: number }> };
       return {
         content: JSON.stringify({
-          results: parsed.candidates.map((candidate) => ({
+          results: parsed.untrustedNotes.map((candidate) => ({
             id: candidate.id,
             relevance: 5,
             strength: "Weak",
@@ -163,8 +182,8 @@ class DecisionAnalysisProvider implements LlmProvider {
     const prompt = request.messages.at(-1)?.content ?? "";
     if (prompt.includes("Find explicit or strongly implied decisions")) {
       this.called = true;
-      const parsed = JSON.parse(prompt) as { notes: Array<{ id: number; content: string }> };
-      assert.match(parsed.notes[0]?.content ?? "", /Use PKCE/);
+      const parsed = JSON.parse(prompt) as { untrustedNotes: Array<{ id: number; content: string }> };
+      assert.match(parsed.untrustedNotes[0]?.content ?? "", /Use PKCE/);
       return {
         content: JSON.stringify({
           decisions: [
@@ -173,13 +192,7 @@ class DecisionAnalysisProvider implements LlmProvider {
               rationale: "The note says PKCE avoids shipping a client secret.",
               status: "Chosen",
               confidence: "High",
-              relatedNoteIds: [parsed.notes[0]?.id]
-            },
-            {
-              decision: "",
-              rationale: "Malformed items are ignored.",
-              confidence: "High",
-              relatedNoteIds: [parsed.notes[0]?.id]
+              relatedNoteIds: [parsed.untrustedNotes[0]?.id]
             }
           ]
         })
@@ -196,8 +209,8 @@ class GapAnalysisProvider implements LlmProvider {
     const prompt = request.messages.at(-1)?.content ?? "";
     if (prompt.includes("Find important terms, entities, acronyms")) {
       this.called = true;
-      const parsed = JSON.parse(prompt) as { notes: Array<{ id: number; content: string }> };
-      assert.match(parsed.notes[0]?.content ?? "", /PKCE/);
+      const parsed = JSON.parse(prompt) as { untrustedNotes: Array<{ id: number; content: string }> };
+      assert.match(parsed.untrustedNotes[0]?.content ?? "", /PKCE/);
       return {
         content: JSON.stringify({
           gaps: [
@@ -206,14 +219,7 @@ class GapAnalysisProvider implements LlmProvider {
               whyItMatters: "It affects how the OAuth client proves possession during auth.",
               evidence: "PKCE is named as required but not defined.",
               suggestedQuestion: "What is PKCE and why does this OAuth flow need it?",
-              relatedNoteIds: [parsed.notes[0]?.id]
-            },
-            {
-              term: "Dropped",
-              whyItMatters: "",
-              evidence: "Malformed items are ignored.",
-              suggestedQuestion: "Should not appear.",
-              relatedNoteIds: [parsed.notes[0]?.id]
+              relatedNoteIds: [parsed.untrustedNotes[0]?.id]
             }
           ]
         })
@@ -355,6 +361,31 @@ test("metadata refresh updates the current draft and saved search shape", async 
     assert.equal(saved.content, "Garden plan tomorrow: buy soil and sketch beds.");
     assert.equal(results.length, 1);
     assert.deepEqual(results[0]?.entities, [{ name: "Garden beds", type: "project" }]);
+  } finally {
+    store.close();
+  }
+});
+
+test("PII redaction does not mutate saved raw note content", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "logbook-session-pii-"));
+  const store = new NoteStore({
+    notesDir: path.join(dir, "notes"),
+    dbPath: path.join(dir, ".logbook", "logbook.sqlite")
+  });
+  const provider = new RecordingSessionProvider();
+  const session = new NoteSession(store, provider);
+  const raw = "Contact Jane at jane@example.com or 415-555-1212.";
+
+  try {
+    await session.append(raw);
+    await session.refreshMetadata();
+    const saved = session.save();
+    const prompt = provider.requests.at(-1)?.messages.at(-1)?.content ?? "";
+
+    assert.match(prompt, /\[REDACTED_EMAIL_1\]/);
+    assert.match(prompt, /\[REDACTED_PHONE_1\]/);
+    assert.equal(saved.content, raw);
+    assert.match(fs.readFileSync(saved.markdownPath, "utf8"), /jane@example\.com/);
   } finally {
     store.close();
   }
@@ -1000,7 +1031,7 @@ test("analysis commands reject malformed provider responses", async () => {
 
     await assert.rejects(
       session.gaps("oauth"),
-      /LLM gaps response did not include gaps/
+      /Invalid input/
     );
   } finally {
     store.close();
