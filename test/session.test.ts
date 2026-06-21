@@ -155,6 +155,79 @@ class UnrelatedRerankProvider implements LlmProvider {
   }
 }
 
+class DecisionAnalysisProvider implements LlmProvider {
+  called = false;
+
+  async complete(request: LlmRequest): Promise<{ content: string }> {
+    const prompt = request.messages.at(-1)?.content ?? "";
+    if (prompt.includes("Find explicit or strongly implied decisions")) {
+      this.called = true;
+      const parsed = JSON.parse(prompt) as { notes: Array<{ id: number; content: string }> };
+      assert.match(parsed.notes[0]?.content ?? "", /Use PKCE/);
+      return {
+        content: JSON.stringify({
+          decisions: [
+            {
+              decision: "Use PKCE for the OAuth flow.",
+              rationale: "The note says PKCE avoids shipping a client secret.",
+              status: "Chosen",
+              confidence: "High",
+              relatedNoteIds: [parsed.notes[0]?.id]
+            },
+            {
+              decision: "",
+              rationale: "Malformed items are ignored.",
+              confidence: "High",
+              relatedNoteIds: [parsed.notes[0]?.id]
+            }
+          ]
+        })
+      };
+    }
+    return { content: "{}" };
+  }
+}
+
+class GapAnalysisProvider implements LlmProvider {
+  called = false;
+
+  async complete(request: LlmRequest): Promise<{ content: string }> {
+    const prompt = request.messages.at(-1)?.content ?? "";
+    if (prompt.includes("Find important terms, entities, acronyms")) {
+      this.called = true;
+      const parsed = JSON.parse(prompt) as { notes: Array<{ id: number; content: string }> };
+      assert.match(parsed.notes[0]?.content ?? "", /PKCE/);
+      return {
+        content: JSON.stringify({
+          gaps: [
+            {
+              term: "PKCE",
+              whyItMatters: "It affects how the OAuth client proves possession during auth.",
+              evidence: "PKCE is named as required but not defined.",
+              suggestedQuestion: "What is PKCE and why does this OAuth flow need it?",
+              relatedNoteIds: [parsed.notes[0]?.id]
+            },
+            {
+              term: "Dropped",
+              whyItMatters: "",
+              evidence: "Malformed items are ignored.",
+              suggestedQuestion: "Should not appear.",
+              relatedNoteIds: [parsed.notes[0]?.id]
+            }
+          ]
+        })
+      };
+    }
+    return { content: "{}" };
+  }
+}
+
+class MalformedAnalysisProvider implements LlmProvider {
+  async complete(): Promise<{ content: string }> {
+    return { content: JSON.stringify({ results: [] }) };
+  }
+}
+
 test("captures, extracts metadata, processes, saves, and searches", async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "logbook-session-"));
   const store = new NoteStore({
@@ -581,6 +654,171 @@ test("related lookup drops weak contrastive rerank explanations", async () => {
     const lookup = await session.related({ query: "how has work been going the past week? do i need to worry about my hours over the next couple weeks?" });
 
     assert.deepEqual(lookup.results.map((result) => result.title), ["Work and Well-being"]);
+  } finally {
+    store.close();
+  }
+});
+
+test("decisions analysis synthesizes provider results from related notes", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "logbook-session-decisions-"));
+  const store = new NoteStore({
+    notesDir: path.join(dir, "notes"),
+    dbPath: path.join(dir, ".logbook", "logbook.sqlite")
+  });
+  const provider = new DecisionAnalysisProvider();
+  const session = new NoteSession(store, provider);
+
+  try {
+    const note = store.saveDraft({
+      raw: "OAuth decision: Use PKCE because we cannot safely ship a client secret.",
+      metadata: {
+        title: "OAuth PKCE Decision",
+        tags: ["oauth"],
+        topics: ["OAuth"],
+        entities: [{ name: "PKCE", type: "security" }],
+        dates: [],
+        summary: "Decision to use PKCE for OAuth.",
+        type: "research"
+      }
+    }, new Date("2026-06-20T12:00:00Z"));
+
+    const analysis = await session.decisions("oauth");
+
+    assert.equal(provider.called, true);
+    assert.equal(analysis.query, "oauth");
+    assert.equal(analysis.relatedNotes.length, 1);
+    assert.deepEqual(analysis.decisions, [{
+      decision: "Use PKCE for the OAuth flow.",
+      rationale: "The note says PKCE avoids shipping a client secret.",
+      status: "Chosen",
+      confidence: "High",
+      relatedNoteIds: [note.id]
+    }]);
+  } finally {
+    store.close();
+  }
+});
+
+test("gaps analysis identifies unexplained terms from related notes", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "logbook-session-gaps-"));
+  const store = new NoteStore({
+    notesDir: path.join(dir, "notes"),
+    dbPath: path.join(dir, ".logbook", "logbook.sqlite")
+  });
+  const provider = new GapAnalysisProvider();
+  const session = new NoteSession(store, provider);
+
+  try {
+    const note = store.saveDraft({
+      raw: "OAuth implementation note: PKCE is required for the public client.",
+      metadata: {
+        title: "OAuth Client Notes",
+        tags: ["oauth"],
+        topics: ["OAuth"],
+        entities: [{ name: "PKCE", type: "security" }],
+        dates: [],
+        summary: "OAuth note mentioning PKCE.",
+        type: "research"
+      }
+    }, new Date("2026-06-20T12:00:00Z"));
+
+    const analysis = await session.gaps("oauth");
+
+    assert.equal(provider.called, true);
+    assert.equal(analysis.query, "oauth");
+    assert.equal(analysis.relatedNotes.length, 1);
+    assert.deepEqual(analysis.gaps, [{
+      term: "PKCE",
+      whyItMatters: "It affects how the OAuth client proves possession during auth.",
+      evidence: "PKCE is named as required but not defined.",
+      suggestedQuestion: "What is PKCE and why does this OAuth flow need it?",
+      relatedNoteIds: [note.id]
+    }]);
+  } finally {
+    store.close();
+  }
+});
+
+test("analysis commands return empty before calling provider when no notes match", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "logbook-session-analysis-empty-"));
+  const store = new NoteStore({
+    notesDir: path.join(dir, "notes"),
+    dbPath: path.join(dir, ".logbook", "logbook.sqlite")
+  });
+  const provider = new DecisionAnalysisProvider();
+  const session = new NoteSession(store, provider);
+
+  try {
+    const analysis = await session.decisions("oauth");
+
+    assert.equal(provider.called, false);
+    assert.deepEqual(analysis, {
+      query: "oauth",
+      decisions: [],
+      relatedNotes: []
+    });
+  } finally {
+    store.close();
+  }
+});
+
+test("analysis commands require a provider when related notes exist", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "logbook-session-analysis-provider-required-"));
+  const store = new NoteStore({
+    notesDir: path.join(dir, "notes"),
+    dbPath: path.join(dir, ".logbook", "logbook.sqlite")
+  });
+  const session = new NoteSession(store);
+
+  try {
+    store.saveDraft({
+      raw: "OAuth decision: Use PKCE.",
+      metadata: {
+        title: "OAuth PKCE Decision",
+        tags: ["oauth"],
+        topics: ["OAuth"],
+        entities: [{ name: "PKCE", type: "security" }],
+        dates: [],
+        summary: "Decision to use PKCE.",
+        type: "research"
+      }
+    }, new Date("2026-06-20T12:00:00Z"));
+
+    await assert.rejects(
+      session.decisions("oauth"),
+      /LLM provider is not configured/
+    );
+  } finally {
+    store.close();
+  }
+});
+
+test("analysis commands reject malformed provider responses", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "logbook-session-analysis-malformed-"));
+  const store = new NoteStore({
+    notesDir: path.join(dir, "notes"),
+    dbPath: path.join(dir, ".logbook", "logbook.sqlite")
+  });
+  const session = new NoteSession(store, new MalformedAnalysisProvider());
+
+  try {
+    store.saveDraft({
+      raw: "OAuth implementation note: PKCE is required.",
+      metadata: {
+        title: "OAuth Client Notes",
+        tags: ["oauth"],
+        topics: ["OAuth"],
+        entities: [{ name: "PKCE", type: "security" }],
+        dates: [],
+        summary: "OAuth note mentioning PKCE.",
+        type: "research"
+      }
+    }, new Date("2026-06-20T12:00:00Z"));
+
+    await assert.rejects(
+      session.gaps("oauth"),
+      /LLM gaps response did not include gaps/
+    );
   } finally {
     store.close();
   }

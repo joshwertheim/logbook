@@ -59,6 +59,36 @@ export interface RelatedLookupResult {
   llmSkippedReason?: string;
 }
 
+export type AnalysisConfidence = "High" | "Medium" | "Low";
+
+export interface DecisionAnalysisItem {
+  decision: string;
+  rationale: string;
+  status?: string;
+  confidence: AnalysisConfidence;
+  relatedNoteIds: number[];
+}
+
+export interface DecisionAnalysisResult {
+  query: string;
+  decisions: DecisionAnalysisItem[];
+  relatedNotes: RelatedResult[];
+}
+
+export interface GapAnalysisItem {
+  term: string;
+  whyItMatters: string;
+  evidence: string;
+  suggestedQuestion: string;
+  relatedNoteIds: number[];
+}
+
+export interface GapAnalysisResult {
+  query: string;
+  gaps: GapAnalysisItem[];
+  relatedNotes: RelatedResult[];
+}
+
 export interface ChatMessage {
   role: "system" | "user" | "assistant";
   content: string;

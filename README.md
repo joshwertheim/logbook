@@ -79,6 +79,8 @@ LLM calls happen in these cases:
 - `/tag` sends the raw note with a tag-generation prompt and expects JSON shaped like `{ "tags": [...] }`. If the call fails, Logbook falls back to local keyword tags.
 - `/process` sends the raw note with an organization prompt and stores the returned organized version. This command requires a configured provider.
 - `/related [query]` first finds deterministic candidates locally, then asks the model to rerank those candidates as JSON. If no provider is configured or reranking fails, Logbook returns the deterministic ranking and prints why LLM reranking was skipped.
+- `/decisions <query>` first finds deterministic candidates locally, then asks the model to synthesize supported decisions, rationale, and related note references as JSON. This command requires a configured provider when matching notes exist.
+- `/gaps <query>` first finds deterministic candidates locally, then asks the model to identify important unexplained terms, entities, acronyms, or project names as JSON. This command requires a configured provider when matching notes exist.
 
 These commands do not call the LLM provider: `/save`, autosave, `/new`, `/search`, `/check`, `/index`, `/provider`, `/compose`, `/help`, and `/quit`.
 
@@ -94,6 +96,8 @@ Press Tab while typing a slash command to autocomplete matching commands, such a
 - `/summary` creates a short summary.
 - `/search <query>` searches stored notes.
 - `/related [query]` finds saved notes related to the current note or supplied query.
+- `/decisions <query>` synthesizes decisions and rationale from related notes.
+- `/gaps <query>` finds unexplained terms and entities in related notes.
 - `/check <question>` checks saved notes by natural date phrases, such as `/check what happened today`.
 - `/index` indexes Markdown notes into SQLite.
 - `/provider` shows active provider configuration.

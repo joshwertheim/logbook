@@ -8,7 +8,7 @@ import { loadDotEnv } from "./env.js";
 import { OpenAICompatibleProvider, providerConfigFromEnv, providerStatus, ProviderConfigError } from "./provider.js";
 import { NoteSession } from "./session.js";
 import { defaultStoragePaths, NoteStore } from "./storage.js";
-import type { RelatedResult } from "./types.js";
+import type { DecisionAnalysisResult, GapAnalysisResult, RelatedResult } from "./types.js";
 
 const autosaveDelayMs = 2000;
 
@@ -208,6 +208,24 @@ async function main(): Promise<void> {
             }
             break;
           }
+          case "decisions": {
+            if (!parsed.args.trim()) {
+              output.write("Usage: /decisions <query>\n");
+              break;
+            }
+            const analysis = await session.decisions(parsed.args);
+            output.write(formatDecisionAnalysis(analysis));
+            break;
+          }
+          case "gaps": {
+            if (!parsed.args.trim()) {
+              output.write("Usage: /gaps <query>\n");
+              break;
+            }
+            const analysis = await session.gaps(parsed.args);
+            output.write(formatGapAnalysis(analysis));
+            break;
+          }
           case "note": {
             const selection = parseRelatedSelectionArgs(parsed.args);
             if (!selection.index) {
@@ -312,6 +330,57 @@ function formatRelatedSelection(result: RelatedResult, field: "all" | "snippet" 
         `ID: ${result.id}`
       ].join("\n") + "\n";
   }
+}
+
+function formatDecisionAnalysis(analysis: DecisionAnalysisResult): string {
+  if (analysis.relatedNotes.length === 0) {
+    return `No saved notes matched ${analysis.query}.\n`;
+  }
+  if (analysis.decisions.length === 0) {
+    return `No supported decisions found for ${analysis.query}.\n`;
+  }
+
+  const titlesById = new Map(analysis.relatedNotes.map((note) => [note.id, note.title]));
+  const lines = [`Decisions for ${analysis.query}:`];
+  analysis.decisions.forEach((item, index) => {
+    lines.push(`${index + 1}. ${item.decision}`);
+    lines.push(`   Rationale: ${item.rationale}`);
+    if (item.status) {
+      lines.push(`   Status: ${item.status}`);
+    }
+    lines.push(`   Confidence: ${item.confidence}`);
+    lines.push(`   Notes: ${formatReferencedNotes(item.relatedNoteIds, titlesById)}`);
+  });
+  return `${lines.join("\n")}\n`;
+}
+
+function formatGapAnalysis(analysis: GapAnalysisResult): string {
+  if (analysis.relatedNotes.length === 0) {
+    return `No saved notes matched ${analysis.query}.\n`;
+  }
+  if (analysis.gaps.length === 0) {
+    return `No unexplained terms or entities found for ${analysis.query}.\n`;
+  }
+
+  const titlesById = new Map(analysis.relatedNotes.map((note) => [note.id, note.title]));
+  const lines = [`Gaps for ${analysis.query}:`];
+  analysis.gaps.forEach((item, index) => {
+    lines.push(`${index + 1}. ${item.term}`);
+    lines.push(`   Why it matters: ${item.whyItMatters}`);
+    lines.push(`   Evidence: ${item.evidence}`);
+    lines.push(`   Suggested question: ${item.suggestedQuestion}`);
+    lines.push(`   Notes: ${formatReferencedNotes(item.relatedNoteIds, titlesById)}`);
+  });
+  return `${lines.join("\n")}\n`;
+}
+
+function formatReferencedNotes(noteIds: number[], titlesById: Map<number, string>): string {
+  return noteIds
+    .map((id) => {
+      const title = titlesById.get(id);
+      return title ? `[${id}] ${title}` : `[${id}]`;
+    })
+    .join(", ");
 }
 
 main().catch((error: unknown) => {

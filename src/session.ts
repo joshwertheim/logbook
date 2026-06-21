@@ -1,6 +1,6 @@
 import { organizationPrompt, noteTakingSystemPrompt } from "./prompts.js";
 import { generateSummary, generateTags, extractMetadata, fallbackMetadata, fallbackSummary, fallbackTags, refreshMetadata } from "./metadata.js";
-import type { CheckResult, LlmProvider, NoteDraft, NoteMetadata, RelatedLookupResult, RelatedResult, RelatedStrength, SavedNote, SearchResult } from "./types.js";
+import type { AnalysisConfidence, CheckResult, DecisionAnalysisItem, DecisionAnalysisResult, GapAnalysisItem, GapAnalysisResult, LlmProvider, NoteDraft, NoteMetadata, RelatedLookupResult, RelatedResult, RelatedStrength, SavedNote, SearchResult } from "./types.js";
 import type { DateCheckQuery } from "./check.js";
 import { ProviderConfigError } from "./provider.js";
 import { NoteStore } from "./storage.js";
@@ -180,6 +180,50 @@ export class NoteSession {
     }
   }
 
+  async decisions(query: string): Promise<DecisionAnalysisResult> {
+    const trimmed = query.trim();
+    if (!trimmed) {
+      throw new Error("Usage: /decisions <query>");
+    }
+
+    const candidates = this.store.relatedToQuery(trimmed).slice(0, 12);
+    if (candidates.length === 0) {
+      return { query: trimmed, decisions: [], relatedNotes: [] };
+    }
+
+    if (!this.provider) {
+      throw new ProviderConfigError();
+    }
+
+    return {
+      query: trimmed,
+      decisions: await analyzeDecisions(trimmed, candidates, this.provider),
+      relatedNotes: candidates
+    };
+  }
+
+  async gaps(query: string): Promise<GapAnalysisResult> {
+    const trimmed = query.trim();
+    if (!trimmed) {
+      throw new Error("Usage: /gaps <query>");
+    }
+
+    const candidates = this.store.relatedToQuery(trimmed).slice(0, 12);
+    if (candidates.length === 0) {
+      return { query: trimmed, gaps: [], relatedNotes: [] };
+    }
+
+    if (!this.provider) {
+      throw new ProviderConfigError();
+    }
+
+    return {
+      query: trimmed,
+      gaps: await analyzeGaps(trimmed, candidates, this.provider),
+      relatedNotes: candidates
+    };
+  }
+
   private ensureRaw(): void {
     if (!this.raw) {
       throw new Error("There is no note content yet.");
@@ -226,6 +270,156 @@ export class NoteSession {
       }
     });
   }
+}
+
+async function analyzeDecisions(query: string, candidates: RelatedResult[], provider: LlmProvider): Promise<DecisionAnalysisItem[]> {
+  const response = await provider.complete({
+    responseFormat: "json",
+    temperature: 0.1,
+    messages: [
+      {
+        role: "system",
+        content: "You analyze personal notes. Return strict JSON only. Use only the provided notes as evidence."
+      },
+      {
+        role: "user",
+        content: JSON.stringify({
+          task: "Find explicit or strongly implied decisions related to the query. Group the same decision across notes. Include rationale only when supported by the notes. Return {\"decisions\":[{\"decision\":\"short decision\",\"rationale\":\"why this decision appears to have been made\",\"status\":\"optional current state\",\"confidence\":\"High|Medium|Low\",\"relatedNoteIds\":[number]}]}. If no decisions are supported, return {\"decisions\":[]}.",
+          query,
+          notes: candidates.map(candidateForAnalysis)
+        })
+      }
+    ]
+  });
+
+  return parseDecisionAnalysisResponse(response.content, candidates);
+}
+
+async function analyzeGaps(query: string, candidates: RelatedResult[], provider: LlmProvider): Promise<GapAnalysisItem[]> {
+  const response = await provider.complete({
+    responseFormat: "json",
+    temperature: 0.1,
+    messages: [
+      {
+        role: "system",
+        content: "You analyze personal notes. Return strict JSON only. Use only the provided notes as evidence."
+      },
+      {
+        role: "user",
+        content: JSON.stringify({
+          task: "Find important terms, entities, acronyms, or project names related to the query that are mentioned but not explained or defined in the provided notes. Do not include common words or concepts explained in the notes. Return {\"gaps\":[{\"term\":\"term\",\"whyItMatters\":\"why it matters for understanding these notes\",\"evidence\":\"brief note-based evidence that it is mentioned but not explained\",\"suggestedQuestion\":\"question to answer later\",\"relatedNoteIds\":[number]}]}. If no gaps are supported, return {\"gaps\":[]}.",
+          query,
+          notes: candidates.map(candidateForAnalysis)
+        })
+      }
+    ]
+  });
+
+  return parseGapAnalysisResponse(response.content, candidates);
+}
+
+function candidateForAnalysis(candidate: RelatedResult): Record<string, unknown> {
+  return {
+    id: candidate.id,
+    title: candidate.title,
+    summary: candidate.summary,
+    tags: candidate.tags,
+    topics: candidate.topics,
+    entities: candidate.entities,
+    noteType: candidate.noteType,
+    deterministicScore: candidate.score,
+    deterministicReasons: candidate.reasons,
+    content: candidate.content
+  };
+}
+
+function parseDecisionAnalysisResponse(content: string, candidates: RelatedResult[]): DecisionAnalysisItem[] {
+  const parsed = JSON.parse(content) as unknown;
+  if (!isRecord(parsed) || !Array.isArray(parsed.decisions)) {
+    throw new Error("LLM decisions response did not include decisions.");
+  }
+
+  const candidateIds = new Set(candidates.map((candidate) => candidate.id));
+  return parsed.decisions.flatMap((item) => {
+    if (!isRecord(item)) {
+      return [];
+    }
+    const decision = cleanString(item.decision);
+    const rationale = cleanString(item.rationale);
+    if (!decision || !rationale) {
+      return [];
+    }
+
+    const relatedNoteIds = normalizeRelatedNoteIds(item.relatedNoteIds, candidateIds);
+    if (relatedNoteIds.length === 0) {
+      return [];
+    }
+
+    const status = cleanString(item.status);
+    return [{
+      decision,
+      rationale,
+      ...(status ? { status } : {}),
+      confidence: normalizeAnalysisConfidence(item.confidence),
+      relatedNoteIds
+    }];
+  });
+}
+
+function parseGapAnalysisResponse(content: string, candidates: RelatedResult[]): GapAnalysisItem[] {
+  const parsed = JSON.parse(content) as unknown;
+  if (!isRecord(parsed) || !Array.isArray(parsed.gaps)) {
+    throw new Error("LLM gaps response did not include gaps.");
+  }
+
+  const candidateIds = new Set(candidates.map((candidate) => candidate.id));
+  return parsed.gaps.flatMap((item) => {
+    if (!isRecord(item)) {
+      return [];
+    }
+    const term = cleanString(item.term);
+    const whyItMatters = cleanString(item.whyItMatters);
+    const evidence = cleanString(item.evidence);
+    const suggestedQuestion = cleanString(item.suggestedQuestion);
+    if (!term || !whyItMatters || !evidence || !suggestedQuestion) {
+      return [];
+    }
+
+    const relatedNoteIds = normalizeRelatedNoteIds(item.relatedNoteIds, candidateIds);
+    if (relatedNoteIds.length === 0) {
+      return [];
+    }
+
+    return [{ term, whyItMatters, evidence, suggestedQuestion, relatedNoteIds }];
+  });
+}
+
+function cleanString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function normalizeRelatedNoteIds(value: unknown, candidateIds: Set<number>): number[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  const seen = new Set<number>();
+  const ids: number[] = [];
+  for (const item of value) {
+    if (typeof item !== "number" || !Number.isInteger(item) || !candidateIds.has(item) || seen.has(item)) {
+      continue;
+    }
+    seen.add(item);
+    ids.push(item);
+  }
+  return ids;
+}
+
+function normalizeAnalysisConfidence(value: unknown): AnalysisConfidence {
+  if (value === "High" || value === "Medium" || value === "Low") {
+    return value;
+  }
+  return "Medium";
 }
 
 async function rerankRelatedResults(candidates: RelatedResult[], source: string, provider: LlmProvider): Promise<RelatedResult[]> {

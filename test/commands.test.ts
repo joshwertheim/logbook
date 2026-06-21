@@ -38,6 +38,19 @@ test("parses related command with optional query", () => {
   });
 });
 
+test("parses analysis commands with queries", () => {
+  assert.deepEqual(parseInput("/decisions oauth"), {
+    kind: "command",
+    name: "decisions",
+    args: "oauth"
+  });
+  assert.deepEqual(parseInput("/gaps mcp"), {
+    kind: "command",
+    name: "gaps",
+    args: "mcp"
+  });
+});
+
 test("parses related result selection command", () => {
   assert.deepEqual(parseInput("/note 2 snippet"), {
     kind: "command",
@@ -71,6 +84,8 @@ test("parses related selection args", () => {
 
 test("help text documents related command", () => {
   assert.match(helpText(), /\/related \[query\]/);
+  assert.match(helpText(), /\/decisions <query>/);
+  assert.match(helpText(), /\/gaps <query>/);
   assert.match(helpText(), /\/note <number>/);
 });
 
@@ -122,6 +137,8 @@ test("treats unknown slash commands as command errors", () => {
 
 test("completes slash command prefixes", () => {
   assert.deepEqual(completeSlashCommand("/rel"), [["/related"], "/rel"]);
+  assert.deepEqual(completeSlashCommand("/dec"), [["/decisions"], "/dec"]);
+  assert.deepEqual(completeSlashCommand("/gap"), [["/gaps"], "/gap"]);
 });
 
 test("lists all slash commands for bare slash", () => {

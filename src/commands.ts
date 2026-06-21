@@ -7,6 +7,8 @@ export type SlashCommandName =
   | "summary"
   | "search"
   | "related"
+  | "decisions"
+  | "gaps"
   | "note"
   | "check"
   | "index"
@@ -44,6 +46,8 @@ export const slashCommands: SlashCommandName[] = [
   "summary",
   "search",
   "related",
+  "decisions",
+  "gaps",
   "note",
   "check",
   "index",
@@ -103,6 +107,8 @@ export function helpText(): string {
     "/summary - create a short summary",
     "/search <query> - search stored notes",
     "/related [query] - find saved notes related to the current note or supplied query",
+    "/decisions <query> - synthesize decisions and rationale from related notes",
+    "/gaps <query> - find unexplained terms and entities in related notes",
     "/note <number> [all|snippet|path|id|reason] - show details for a numbered /related result",
     "/check <question> - check saved notes by natural date phrases, such as what happened today",
     "/index - index Markdown notes into SQLite",
