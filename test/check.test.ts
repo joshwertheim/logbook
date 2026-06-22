@@ -50,6 +50,25 @@ test("matches saved notes by created date and metadata dates", () => {
   });
 });
 
+test("resolves relative metadata dates from the note creation date", () => {
+  const query = {
+    kind: "date" as const,
+    label: "today",
+    targetDate: "2026-06-21",
+    relativeWord: "today" as const,
+    subjectTerms: []
+  };
+
+  assert.deepEqual(matchDateCheck({
+    createdAt: "2026-06-20T12:00:00.000Z",
+    updatedAt: "2026-06-20T12:00:00.000Z",
+    dates: ["today"]
+  }, query), {
+    matched: false,
+    reasons: []
+  });
+});
+
 test("matches slash-form metadata dates against normalized date queries", () => {
   const query = {
     kind: "date" as const,

@@ -101,9 +101,12 @@ Press Tab while typing a slash command to autocomplete matching commands, such a
 - `/tag` regenerates tags only; `/metadata` is preferred for the full metadata contract.
 - `/summary` creates a short summary.
 - `/search <query>` searches stored notes.
+- `/amend <query>` appends a dated update to an existing saved note.
+- `/edit <query>` edits the raw capture of an existing saved note.
 - `/related [query]` finds saved notes related to the current note or supplied query.
 - `/decisions <query>` synthesizes decisions and rationale from related notes.
 - `/gaps <query>` finds unexplained terms and entities in related notes.
+- `/note <number> [all|snippet|path|id|reason]` shows details for a numbered `/related` result.
 - `/check <question>` checks saved notes by natural date phrases, such as `/check what happened today`.
 - `/index` indexes Markdown notes into SQLite.
 - `/provider` shows active provider configuration.
@@ -116,6 +119,8 @@ Press Tab while typing a slash command to autocomplete matching commands, such a
 Markdown notes are written to `notes/YYYY-MM-DD-slug.md`. SQLite data is stored in `.logbook/logbook.sqlite`.
 
 SQLite is the CLI's operational source of truth. Markdown files are readable mirrors written on save; manual Markdown edits are not reflected in CLI search, check, or related-note results until you run `/index` or `logbook index`.
+
+Indexing expects Logbook's generated frontmatter shape: one `key: value` entry per line, with strings and arrays written as JSON-compatible inline values. General YAML features such as multi-line arrays are not parsed.
 
 Use `/index` inside the interactive CLI, or run this outside the CLI:
 

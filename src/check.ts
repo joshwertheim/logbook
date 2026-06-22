@@ -121,10 +121,12 @@ export function matchDateCheck(input: CheckMatchInput, query: DateCheckQuery): C
 
   for (const date of input.dates) {
     const normalized = date.trim().toLowerCase();
+    const normalizedDate = normalizeDateToken(normalized);
+    const relativeDate = normalizeRelativeDateToken(normalized, input.createdAt);
     if (
       normalized === query.targetDate
-      || normalizeDateToken(normalized) === query.targetDate
-      || (query.relativeWord !== undefined && normalized === query.relativeWord)
+      || normalizedDate === query.targetDate
+      || relativeDate === query.targetDate
     ) {
       reasons.push(`mentions ${date}`);
     }
@@ -147,6 +149,25 @@ export function formatLocalDate(date: Date): string {
   const month = String(date.getMonth() + 1).padStart(2, "0");
   const day = String(date.getDate()).padStart(2, "0");
   return `${year}-${month}-${day}`;
+}
+
+function normalizeRelativeDateToken(value: string, createdAt: string): string | undefined {
+  const createdDate = new Date(createdAt);
+  if (Number.isNaN(createdDate.getTime())) {
+    return undefined;
+  }
+
+  if (value === "today") {
+    return formatLocalDate(createdDate);
+  }
+  if (value === "yesterday") {
+    return formatLocalDate(addDays(createdDate, -1));
+  }
+  if (value === "tomorrow") {
+    return formatLocalDate(addDays(createdDate, 1));
+  }
+
+  return undefined;
 }
 
 function normalizeDateToken(value: string): string | undefined {

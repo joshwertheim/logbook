@@ -49,6 +49,48 @@ test("saves notes to markdown and sqlite, then searches them", () => {
   }
 });
 
+test("search treats SQL LIKE metacharacters as literal text", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "logbook-search-literal-"));
+  const store = new NoteStore({
+    notesDir: path.join(dir, "notes"),
+    dbPath: path.join(dir, ".logbook", "logbook.sqlite")
+  });
+
+  try {
+    store.saveDraft({
+      raw: "Plain note without wildcard characters.",
+      metadata: {
+        title: "Plain Note",
+        tags: [],
+        topics: [],
+        entities: [],
+        dates: [],
+        summary: "Plain note.",
+        type: "scratchpad"
+      }
+    }, new Date("2026-06-19T12:00:00Z"));
+
+    store.saveDraft({
+      raw: "Literal 100% coverage and a_b marker.",
+      metadata: {
+        title: "Wildcard Literals",
+        tags: ["100%"],
+        topics: [],
+        entities: [],
+        dates: [],
+        summary: "Literal wildcard note.",
+        type: "scratchpad"
+      }
+    }, new Date("2026-06-19T12:01:00Z"));
+
+    assert.deepEqual(store.search("%").map((result) => result.title), ["Wildcard Literals"]);
+    assert.deepEqual(store.search("_").map((result) => result.title), ["Wildcard Literals"]);
+    assert.deepEqual(store.search("100%").map((result) => result.title), ["Wildcard Literals"]);
+  } finally {
+    store.close();
+  }
+});
+
 test("updates saved notes in place and records a new version", () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "logbook-update-"));
   const dbPath = path.join(dir, ".logbook", "logbook.sqlite");

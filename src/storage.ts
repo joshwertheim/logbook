@@ -265,22 +265,22 @@ export class NoteStore {
   }
 
   search(query: string): SearchResult[] {
-    const pattern = `%${query}%`;
+    const pattern = `%${escapeLikePattern(query)}%`;
     const rows = this.db.prepare(`
       SELECT * FROM notes
-      WHERE title LIKE ?
-         OR raw_content LIKE ?
-         OR processed_content LIKE ?
-         OR summary LIKE ?
+      WHERE title LIKE ? ESCAPE '\\'
+         OR raw_content LIKE ? ESCAPE '\\'
+         OR processed_content LIKE ? ESCAPE '\\'
+         OR summary LIKE ? ESCAPE '\\'
          OR EXISTS (
            SELECT 1 FROM json_tree(notes.metadata_json)
            WHERE json_tree.type IN ('text', 'integer', 'real', 'true', 'false')
-             AND CAST(json_tree.atom AS TEXT) LIKE ?
+             AND CAST(json_tree.atom AS TEXT) LIKE ? ESCAPE '\\'
          )
          OR id IN (
            SELECT note_tags.note_id FROM note_tags
            JOIN tags ON tags.id = note_tags.tag_id
-           WHERE tags.name LIKE ?
+           WHERE tags.name LIKE ? ESCAPE '\\'
          )
       ORDER BY updated_at DESC
       LIMIT 25
@@ -876,6 +876,10 @@ function makeSnippet(content: string, query: string): string {
   const start = Math.max(0, index - 60);
   const end = Math.min(content.length, index + query.length + 100);
   return content.slice(start, end).trim();
+}
+
+function escapeLikePattern(value: string): string {
+  return value.replace(/[\\%_]/g, (match) => `\\${match}`);
 }
 
 function metadataDates(metadataJson: string | null): string[] {
