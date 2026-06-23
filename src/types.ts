@@ -31,6 +31,7 @@ export interface SavedNote {
   tags: string[];
   topics: string[];
   entities: NoteEntity[];
+  dates: string[];
   summary: string;
   noteType: string;
   createdAt: string;
@@ -100,6 +101,34 @@ export interface GapAnalysisResult {
   query: string;
   gaps: GapAnalysisItem[];
   relatedNotes: RelatedResult[];
+}
+
+export interface ContextTheme {
+  title: string;
+  details: string;
+  relatedNoteIds: number[];
+}
+
+export interface ContextTimelineItem {
+  date: string;
+  event: string;
+  relatedNoteIds: number[];
+}
+
+export interface ContextGap {
+  question: string;
+  reason: string;
+  relatedNoteIds: number[];
+}
+
+export interface ContextAnalysisResult {
+  query: string;
+  snapshot: string[];
+  themes: ContextTheme[];
+  timeline: ContextTimelineItem[];
+  gaps: ContextGap[];
+  relatedNotes: RelatedResult[];
+  llmSkippedReason?: string;
 }
 
 export interface ChatMessage {

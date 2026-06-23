@@ -9,6 +9,7 @@ export type SlashCommandName =
   | "amend"
   | "edit"
   | "related"
+  | "context"
   | "decisions"
   | "gaps"
   | "note"
@@ -50,6 +51,7 @@ export const slashCommands: SlashCommandName[] = [
   "amend",
   "edit",
   "related",
+  "context",
   "decisions",
   "gaps",
   "note",
@@ -113,9 +115,10 @@ export function helpText(): string {
     "/amend <query> - append a dated update to an existing saved note",
     "/edit <query> - edit the raw capture of an existing saved note",
     "/related [query] - find saved notes related to the current note or supplied query",
+    "/context <query> - create a concise snapshot from related saved notes",
     "/decisions <query> - synthesize decisions and rationale from related notes",
     "/gaps <query> - find unexplained terms and entities in related notes",
-    "/note <number> [all|snippet|path|id|reason] - show details for a numbered /related result",
+    "/note <number> [all|snippet|path|id|reason] - show details for a numbered /related or /context result",
     "/check <question> - check saved notes by natural date phrases, such as what happened today",
     "/index - index Markdown notes into SQLite",
     "/provider - show active model/provider config",

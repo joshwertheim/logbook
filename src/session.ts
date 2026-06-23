@@ -1,7 +1,7 @@
 import { organizationPrompt, noteTakingSystemPrompt } from "./prompts.js";
 import { generateSummary, generateTags, extractMetadata, fallbackMetadata, fallbackSummary, fallbackTags, refreshMetadata } from "./metadata.js";
 import { cappedArray, llmEnvelope, nonEmptyBoundedString, untrustedNoteRules } from "./llmSafety.js";
-import type { CheckResult, DecisionAnalysisItem, DecisionAnalysisResult, GapAnalysisItem, GapAnalysisResult, LlmProvider, NoteDraft, NoteMetadata, NoteResolutionCandidate, NoteResolutionResult, RelatedLookupResult, RelatedResult, RelatedStrength, SavedNote, SearchResult } from "./types.js";
+import type { CheckResult, ContextAnalysisResult, ContextGap, ContextTheme, ContextTimelineItem, DecisionAnalysisItem, DecisionAnalysisResult, GapAnalysisItem, GapAnalysisResult, LlmProvider, NoteDraft, NoteMetadata, NoteResolutionCandidate, NoteResolutionResult, RelatedLookupResult, RelatedResult, RelatedStrength, SavedNote, SearchResult } from "./types.js";
 import type { DateCheckQuery } from "./check.js";
 import { ProviderConfigError } from "./provider.js";
 import { NoteStore } from "./storage.js";
@@ -321,6 +321,47 @@ export class NoteSession {
     };
   }
 
+  async context(query: string): Promise<ContextAnalysisResult> {
+    const trimmed = query.trim();
+    if (!trimmed) {
+      throw new Error("Usage: /context <query>");
+    }
+
+    const candidates = this.store.relatedToQuery(trimmed).slice(0, 12);
+    const relatedNotes = filterVisibleRelatedResults(candidates, "balanced").slice(0, 10);
+    if (relatedNotes.length === 0) {
+      return {
+        query: trimmed,
+        snapshot: [],
+        themes: [],
+        timeline: [],
+        gaps: [],
+        relatedNotes: []
+      };
+    }
+
+    if (!this.provider) {
+      return {
+        ...localContextAnalysis(trimmed, relatedNotes),
+        llmSkippedReason: "LLM context synthesis skipped: LLM provider is not configured."
+      };
+    }
+
+    try {
+      return {
+        query: trimmed,
+        ...(await analyzeContext(trimmed, relatedNotes, this.provider)),
+        relatedNotes
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return {
+        ...localContextAnalysis(trimmed, relatedNotes),
+        llmSkippedReason: `LLM context synthesis skipped: ${message}`
+      };
+    }
+  }
+
   private ensureRaw(): void {
     if (!this.raw) {
       throw new Error("There is no note content yet.");
@@ -417,6 +458,30 @@ async function analyzeGaps(query: string, candidates: RelatedResult[], provider:
   return parseGapAnalysisResponse(response.content, candidates);
 }
 
+async function analyzeContext(query: string, candidates: RelatedResult[], provider: LlmProvider): Promise<Omit<ContextAnalysisResult, "query" | "relatedNotes" | "llmSkippedReason">> {
+  const response = await provider.complete({
+    responseFormat: "json",
+    temperature: 0.1,
+    messages: [
+      {
+        role: "system",
+        content: "You analyze personal notes as a small knowledgebase. Return strict JSON only. Use only the provided notes as evidence."
+      },
+      {
+        role: "user",
+        content: llmEnvelope({
+          task: "Create a concise knowledge snapshot for the query. Return {\"snapshot\":[\"brief bullet\"],\"themes\":[{\"title\":\"theme\",\"details\":\"note-supported details\",\"relatedNoteIds\":[number]}],\"timeline\":[{\"date\":\"date or date phrase\",\"event\":\"brief event\",\"relatedNoteIds\":[number]}],\"gaps\":[{\"question\":\"question to answer later\",\"reason\":\"why the notes do not fully answer it\",\"relatedNoteIds\":[number]}]}. Keep it brief, only cite provided note IDs, and return empty arrays when unsupported.",
+          rules: untrustedNoteRules,
+          query,
+          untrustedNotes: candidates.map(candidateForAnalysis)
+        })
+      }
+    ]
+  });
+
+  return parseContextAnalysisResponse(response.content, candidates);
+}
+
 function candidateForAnalysis(candidate: RelatedResult): Record<string, unknown> {
   return {
     id: candidate.id,
@@ -425,6 +490,7 @@ function candidateForAnalysis(candidate: RelatedResult): Record<string, unknown>
     tags: candidate.tags,
     topics: candidate.topics,
     entities: candidate.entities,
+    dates: candidate.dates,
     noteType: candidate.noteType,
     deterministicScore: candidate.score,
     deterministicReasons: candidate.reasons,
@@ -471,6 +537,25 @@ const gapAnalysisResponseSchema = z.object({
   }).strict(), 12)
 }).strict();
 
+const contextAnalysisResponseSchema = z.object({
+  snapshot: cappedArray(nonEmptyBoundedString(220), 5),
+  themes: cappedArray(z.object({
+    title: nonEmptyBoundedString(120),
+    details: nonEmptyBoundedString(500),
+    relatedNoteIds: cappedArray(z.number().int(), 12)
+  }).strict(), 6),
+  timeline: cappedArray(z.object({
+    date: nonEmptyBoundedString(80),
+    event: nonEmptyBoundedString(300),
+    relatedNoteIds: cappedArray(z.number().int(), 12)
+  }).strict(), 8),
+  gaps: cappedArray(z.object({
+    question: nonEmptyBoundedString(220),
+    reason: nonEmptyBoundedString(400),
+    relatedNoteIds: cappedArray(z.number().int(), 12)
+  }).strict(), 6)
+}).strict();
+
 function parseDecisionAnalysisResponse(content: string, candidates: RelatedResult[]): DecisionAnalysisItem[] {
   const parsed = decisionAnalysisResponseSchema.parse(JSON.parse(content));
 
@@ -502,6 +587,136 @@ function parseGapAnalysisResponse(content: string, candidates: RelatedResult[]):
     }
 
     return [{ ...item, relatedNoteIds }];
+  });
+}
+
+function parseContextAnalysisResponse(content: string, candidates: RelatedResult[]): Omit<ContextAnalysisResult, "query" | "relatedNotes" | "llmSkippedReason"> {
+  const parsed = contextAnalysisResponseSchema.parse(JSON.parse(content));
+  const candidateIds = new Set(candidates.map((candidate) => candidate.id));
+
+  return {
+    snapshot: parsed.snapshot,
+    themes: parsed.themes.flatMap((item) => {
+      const relatedNoteIds = normalizeRelatedNoteIds(item.relatedNoteIds, candidateIds);
+      return relatedNoteIds.length > 0 ? [{ ...item, relatedNoteIds }] : [];
+    }),
+    timeline: parsed.timeline.flatMap((item) => {
+      const relatedNoteIds = normalizeRelatedNoteIds(item.relatedNoteIds, candidateIds);
+      return relatedNoteIds.length > 0 ? [{ ...item, relatedNoteIds }] : [];
+    }),
+    gaps: parsed.gaps.flatMap((item) => {
+      const relatedNoteIds = normalizeRelatedNoteIds(item.relatedNoteIds, candidateIds);
+      return relatedNoteIds.length > 0 ? [{ ...item, relatedNoteIds }] : [];
+    })
+  };
+}
+
+function localContextAnalysis(query: string, relatedNotes: RelatedResult[]): ContextAnalysisResult {
+  return {
+    query,
+    snapshot: localSnapshot(relatedNotes),
+    themes: localThemes(relatedNotes),
+    timeline: localTimeline(relatedNotes),
+    gaps: [],
+    relatedNotes
+  };
+}
+
+function localSnapshot(relatedNotes: RelatedResult[]): string[] {
+  return relatedNotes.slice(0, 4).map((note) => {
+    const detail = note.summary.trim() || note.snippet.trim() || note.title;
+    return `${note.title}: ${clampSentence(detail, 180)}`;
+  });
+}
+
+function localThemes(relatedNotes: RelatedResult[]): ContextTheme[] {
+  const buckets = new Map<string, { title: string; details: Set<string>; ids: Set<number>; score: number }>();
+  const add = (key: string, title: string, note: RelatedResult, detail: string, score: number): void => {
+    const normalizedKey = key.toLowerCase();
+    const existing = buckets.get(normalizedKey) ?? { title, details: new Set<string>(), ids: new Set<number>(), score: 0 };
+    existing.details.add(detail);
+    existing.ids.add(note.id);
+    existing.score += score;
+    buckets.set(normalizedKey, existing);
+  };
+
+  for (const note of relatedNotes) {
+    for (const tag of note.tags) {
+      add(`tag:${tag}`, tag, note, note.title, 4);
+    }
+    for (const topic of note.topics) {
+      add(`topic:${topic}`, topic, note, note.title, 5);
+    }
+    for (const entity of note.entities) {
+      add(`entity:${entity.name}`, entity.name, note, note.title, 6);
+    }
+    for (const reason of note.reasons) {
+      const theme = themeFromReason(reason);
+      if (theme) {
+        add(`reason:${theme}`, theme, note, note.title, 3);
+      }
+    }
+  }
+
+  return Array.from(buckets.values())
+    .filter((bucket) => bucket.ids.size > 0)
+    .sort((left, right) => right.ids.size - left.ids.size || right.score - left.score || left.title.localeCompare(right.title))
+    .slice(0, 5)
+    .map((bucket) => ({
+      title: titleCase(bucket.title),
+      details: `Related notes: ${Array.from(bucket.details).slice(0, 4).join(", ")}.`,
+      relatedNoteIds: Array.from(bucket.ids)
+    }));
+}
+
+function localTimeline(relatedNotes: RelatedResult[]): ContextTimelineItem[] {
+  const items: ContextTimelineItem[] = [];
+  for (const note of relatedNotes) {
+    const createdDate = note.createdAt.slice(0, 10);
+    if (createdDate) {
+      items.push({
+        date: createdDate,
+        event: `${note.title}: ${clampSentence(note.summary || note.snippet, 180)}`,
+        relatedNoteIds: [note.id]
+      });
+    }
+    for (const date of note.dates.slice(0, 3)) {
+      items.push({
+        date,
+        event: `${note.title}: ${clampSentence(note.summary || note.snippet, 180)}`,
+        relatedNoteIds: [note.id]
+      });
+    }
+  }
+
+  const seen = new Set<string>();
+  return items
+    .filter((item) => {
+      const key = `${item.date}:${item.relatedNoteIds.join(",")}:${item.event}`;
+      if (seen.has(key)) {
+        return false;
+      }
+      seen.add(key);
+      return true;
+    })
+    .sort((left, right) => left.date.localeCompare(right.date))
+    .slice(0, 8);
+}
+
+function themeFromReason(reason: string): string | undefined {
+  const match = /^(?:shared|mentions|literal|confirmed)\s+([^:]+):\s*(.+)$/.exec(reason);
+  const value = match?.[2]?.split(",")[0]?.trim();
+  return value || undefined;
+}
+
+function clampSentence(value: string, maxLength: number): string {
+  const normalized = value.replace(/\s+/g, " ").trim();
+  return normalized.length > maxLength ? `${normalized.slice(0, maxLength - 1).trimEnd()}...` : normalized;
+}
+
+function titleCase(value: string): string {
+  return value.replace(/\b[\p{L}\p{N}][\p{L}\p{N}-]*/gu, (word) => {
+    return word.charAt(0).toUpperCase() + word.slice(1);
   });
 }
 

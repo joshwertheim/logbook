@@ -229,6 +229,51 @@ class GapAnalysisProvider implements LlmProvider {
   }
 }
 
+class ContextAnalysisProvider implements LlmProvider {
+  called = false;
+
+  async complete(request: LlmRequest): Promise<{ content: string }> {
+    const prompt = request.messages.at(-1)?.content ?? "";
+    if (prompt.includes("Create a concise knowledge snapshot")) {
+      this.called = true;
+      const parsed = JSON.parse(prompt) as { untrustedNotes: Array<{ id: number; content: string }> };
+      assert.match(parsed.untrustedNotes[0]?.content ?? "", /PKCE/);
+      return {
+        content: JSON.stringify({
+          snapshot: ["PKCE is the chosen direction for the OAuth public client."],
+          themes: [
+            {
+              title: "OAuth security",
+              details: "The notes center on using PKCE because a public client cannot safely hold a secret.",
+              relatedNoteIds: [parsed.untrustedNotes[0]?.id, 99999]
+            }
+          ],
+          timeline: [
+            {
+              date: "2026-06-20",
+              event: "PKCE decision recorded.",
+              relatedNoteIds: [parsed.untrustedNotes[0]?.id]
+            },
+            {
+              date: "2026-06-21",
+              event: "Invalid note reference should be dropped.",
+              relatedNoteIds: [99999]
+            }
+          ],
+          gaps: [
+            {
+              question: "Who owns OAuth rollout?",
+              reason: "The matching notes do not name an owner.",
+              relatedNoteIds: [parsed.untrustedNotes[0]?.id]
+            }
+          ]
+        })
+      };
+    }
+    return { content: "{}" };
+  }
+}
+
 class MalformedAnalysisProvider implements LlmProvider {
   async complete(): Promise<{ content: string }> {
     return { content: JSON.stringify({ results: [] }) };
@@ -953,6 +998,142 @@ test("gaps analysis identifies unexplained terms from related notes", async () =
   }
 });
 
+test("context analysis falls back locally without provider", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "logbook-session-context-local-"));
+  const store = new NoteStore({
+    notesDir: path.join(dir, "notes"),
+    dbPath: path.join(dir, ".logbook", "logbook.sqlite")
+  });
+  const session = new NoteSession(store);
+
+  try {
+    const note = store.saveDraft({
+      raw: "OAuth implementation note: PKCE is required for the public client.",
+      metadata: {
+        title: "OAuth Client Notes",
+        tags: ["oauth"],
+        topics: ["OAuth"],
+        entities: [{ name: "PKCE", type: "security" }],
+        dates: ["2026-06-21"],
+        summary: "OAuth note mentioning PKCE.",
+        type: "research"
+      }
+    }, new Date("2026-06-20T12:00:00Z"));
+
+    const analysis = await session.context("oauth");
+
+    assert.equal(analysis.query, "oauth");
+    assert.equal(analysis.relatedNotes.length, 1);
+    assert.equal(analysis.relatedNotes[0]?.id, note.id);
+    assert.match(analysis.snapshot[0] ?? "", /OAuth Client Notes/);
+    assert.equal(analysis.gaps.length, 0);
+    assert.match(analysis.llmSkippedReason ?? "", /provider is not configured/);
+    assert.ok(analysis.themes.some((theme) => theme.relatedNoteIds.includes(note.id)));
+    assert.ok(analysis.timeline.some((item) => item.date === "2026-06-20"));
+    assert.ok(analysis.timeline.some((item) => item.date === "2026-06-21"));
+  } finally {
+    store.close();
+  }
+});
+
+test("context analysis parses provider results and filters invalid note ids", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "logbook-session-context-provider-"));
+  const store = new NoteStore({
+    notesDir: path.join(dir, "notes"),
+    dbPath: path.join(dir, ".logbook", "logbook.sqlite")
+  });
+  const provider = new ContextAnalysisProvider();
+  const session = new NoteSession(store, provider);
+
+  try {
+    const note = store.saveDraft({
+      raw: "OAuth implementation note: PKCE is required for the public client.",
+      metadata: {
+        title: "OAuth Client Notes",
+        tags: ["oauth"],
+        topics: ["OAuth"],
+        entities: [{ name: "PKCE", type: "security" }],
+        dates: [],
+        summary: "OAuth note mentioning PKCE.",
+        type: "research"
+      }
+    }, new Date("2026-06-20T12:00:00Z"));
+
+    const analysis = await session.context("oauth");
+
+    assert.equal(provider.called, true);
+    assert.deepEqual(analysis.snapshot, ["PKCE is the chosen direction for the OAuth public client."]);
+    assert.deepEqual(analysis.themes, [{
+      title: "OAuth security",
+      details: "The notes center on using PKCE because a public client cannot safely hold a secret.",
+      relatedNoteIds: [note.id]
+    }]);
+    assert.deepEqual(analysis.timeline, [{
+      date: "2026-06-20",
+      event: "PKCE decision recorded.",
+      relatedNoteIds: [note.id]
+    }]);
+    assert.deepEqual(analysis.gaps, [{
+      question: "Who owns OAuth rollout?",
+      reason: "The matching notes do not name an owner.",
+      relatedNoteIds: [note.id]
+    }]);
+    assert.equal(analysis.llmSkippedReason, undefined);
+  } finally {
+    store.close();
+  }
+});
+
+test("context analysis falls back locally on malformed provider response", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "logbook-session-context-malformed-"));
+  const store = new NoteStore({
+    notesDir: path.join(dir, "notes"),
+    dbPath: path.join(dir, ".logbook", "logbook.sqlite")
+  });
+  const session = new NoteSession(store, new MalformedAnalysisProvider());
+
+  try {
+    store.saveDraft({
+      raw: "OAuth implementation note: PKCE is required.",
+      metadata: {
+        title: "OAuth Client Notes",
+        tags: ["oauth"],
+        topics: ["OAuth"],
+        entities: [{ name: "PKCE", type: "security" }],
+        dates: [],
+        summary: "OAuth note mentioning PKCE.",
+        type: "research"
+      }
+    }, new Date("2026-06-20T12:00:00Z"));
+
+    const analysis = await session.context("oauth");
+
+    assert.equal(analysis.relatedNotes.length, 1);
+    assert.match(analysis.snapshot[0] ?? "", /OAuth Client Notes/);
+    assert.match(analysis.llmSkippedReason ?? "", /LLM context synthesis skipped/);
+  } finally {
+    store.close();
+  }
+});
+
+test("context analysis rejects empty query", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "logbook-session-context-empty-query-"));
+  const store = new NoteStore({
+    notesDir: path.join(dir, "notes"),
+    dbPath: path.join(dir, ".logbook", "logbook.sqlite")
+  });
+  const session = new NoteSession(store);
+
+  try {
+    await assert.rejects(
+      session.context("   "),
+      /Usage: \/context <query>/
+    );
+  } finally {
+    store.close();
+  }
+});
+
 test("analysis commands return empty before calling provider when no notes match", async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "logbook-session-analysis-empty-"));
   const store = new NoteStore({
@@ -969,6 +1150,32 @@ test("analysis commands return empty before calling provider when no notes match
     assert.deepEqual(analysis, {
       query: "oauth",
       decisions: [],
+      relatedNotes: []
+    });
+  } finally {
+    store.close();
+  }
+});
+
+test("context analysis returns empty before calling provider when no notes match", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "logbook-session-context-empty-"));
+  const store = new NoteStore({
+    notesDir: path.join(dir, "notes"),
+    dbPath: path.join(dir, ".logbook", "logbook.sqlite")
+  });
+  const provider = new ContextAnalysisProvider();
+  const session = new NoteSession(store, provider);
+
+  try {
+    const analysis = await session.context("oauth");
+
+    assert.equal(provider.called, false);
+    assert.deepEqual(analysis, {
+      query: "oauth",
+      snapshot: [],
+      themes: [],
+      timeline: [],
+      gaps: [],
       relatedNotes: []
     });
   } finally {

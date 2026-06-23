@@ -85,6 +85,7 @@ LLM calls happen in these cases:
 - `/tag` sends the raw note as `untrustedNote` with a tag-generation task and expects JSON shaped like `{ "tags": [...] }`. If the call fails, Logbook falls back to local keyword tags.
 - `/process` sends the raw note as `untrustedNote` with an organization task and stores the returned organized version. This command requires a configured provider.
 - `/related [query]` first finds deterministic candidates locally, then asks the model to rerank those candidates as `untrustedNotes` JSON. If no provider is configured or reranking fails, Logbook returns the deterministic ranking and prints why LLM reranking was skipped.
+- `/context <query>` first finds related notes locally, then asks the model for a concise snapshot, themes, timeline, gaps, and note references from `untrustedNotes` JSON. If no provider is configured or synthesis fails, Logbook returns a deterministic local snapshot and prints why LLM synthesis was skipped.
 - `/decisions <query>` first finds deterministic candidates locally, then asks the model to synthesize supported decisions, rationale, and related note references from `untrustedNotes` JSON. This command requires a configured provider when matching notes exist.
 - `/gaps <query>` first finds deterministic candidates locally, then asks the model to identify important unexplained terms, entities, acronyms, or project names from `untrustedNotes` JSON. This command requires a configured provider when matching notes exist.
 
@@ -104,9 +105,10 @@ Press Tab while typing a slash command to autocomplete matching commands, such a
 - `/amend <query>` appends a dated update to an existing saved note.
 - `/edit <query>` edits the raw capture of an existing saved note.
 - `/related [query]` finds saved notes related to the current note or supplied query.
+- `/context <query>` creates a concise knowledge snapshot from related saved notes. Its related notes are numbered for `/note` inspection.
 - `/decisions <query>` synthesizes decisions and rationale from related notes.
 - `/gaps <query>` finds unexplained terms and entities in related notes.
-- `/note <number> [all|snippet|path|id|reason]` shows details for a numbered `/related` result.
+- `/note <number> [all|snippet|path|id|reason]` shows details for a numbered `/related` or `/context` result.
 - `/check <question>` checks saved notes by natural date phrases, such as `/check what happened today`.
 - `/index` indexes Markdown notes into SQLite.
 - `/provider` shows active provider configuration.

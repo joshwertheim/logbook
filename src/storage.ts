@@ -861,6 +861,7 @@ function rowToSavedNote(row: NoteRow): SavedNote {
     tags: metadata.tags,
     topics: metadata.topics,
     entities: metadata.entities,
+    dates: metadata.dates,
     summary: row.summary,
     noteType: row.note_type,
     createdAt: row.created_at,

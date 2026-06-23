@@ -12,7 +12,7 @@ import { loadDotEnv } from "./env.js";
 import { OpenAICompatibleProvider, providerConfigFromEnv, providerStatus, ProviderConfigError } from "./provider.js";
 import { NoteSession } from "./session.js";
 import { defaultStoragePaths, NoteStore } from "./storage.js";
-import type { DecisionAnalysisResult, GapAnalysisResult, NoteResolutionCandidate, RelatedResult } from "./types.js";
+import type { ContextAnalysisResult, DecisionAnalysisResult, GapAnalysisResult, NoteResolutionCandidate, RelatedResult } from "./types.js";
 
 const autosaveDelayMs = 2000;
 
@@ -297,6 +297,16 @@ async function main(): Promise<void> {
             }
             break;
           }
+          case "context": {
+            if (!parsed.args.trim()) {
+              output.write("Usage: /context <query>\n");
+              break;
+            }
+            const analysis = await session.context(parsed.args);
+            lastRelatedResults = analysis.relatedNotes;
+            output.write(formatContextAnalysis(analysis));
+            break;
+          }
           case "decisions": {
             if (!parsed.args.trim()) {
               output.write("Usage: /decisions <query>\n");
@@ -323,7 +333,7 @@ async function main(): Promise<void> {
             }
             const result = lastRelatedResults[selection.index - 1];
             if (!result) {
-              output.write("No related result at that number. Run /related first, then choose a listed number.\n");
+              output.write("No related result at that number. Run /related or /context first, then choose a listed number.\n");
               break;
             }
             output.write(formatRelatedSelection(result, selection.field));
@@ -551,6 +561,62 @@ function formatGapAnalysis(analysis: GapAnalysisResult): string {
     lines.push(`   Notes: ${formatReferencedNotes(item.relatedNoteIds, titlesById)}`);
   });
   return `${lines.join("\n")}\n`;
+}
+
+function formatContextAnalysis(analysis: ContextAnalysisResult): string {
+  if (analysis.relatedNotes.length === 0) {
+    return `No saved notes matched ${analysis.query}.\n`;
+  }
+
+  const displayIndexById = new Map(analysis.relatedNotes.map((note, index) => [note.id, index + 1]));
+  const lines = [`Context for ${analysis.query}:`];
+
+  if (analysis.snapshot.length > 0) {
+    lines.push("Snapshot");
+    for (const item of analysis.snapshot) {
+      lines.push(`- ${item}`);
+    }
+  }
+
+  if (analysis.themes.length > 0) {
+    lines.push("Themes");
+    analysis.themes.forEach((theme, index) => {
+      lines.push(`${index + 1}. ${theme.title} ${formatDisplayNoteReferences(theme.relatedNoteIds, displayIndexById)}`);
+      lines.push(`   ${theme.details}`);
+    });
+  }
+
+  if (analysis.timeline.length > 0) {
+    lines.push("Timeline");
+    for (const item of analysis.timeline) {
+      lines.push(`- ${item.date}: ${item.event} ${formatDisplayNoteReferences(item.relatedNoteIds, displayIndexById)}`);
+    }
+  }
+
+  if (analysis.gaps.length > 0) {
+    lines.push("Gaps / Questions");
+    analysis.gaps.forEach((gap, index) => {
+      lines.push(`${index + 1}. ${gap.question} ${formatDisplayNoteReferences(gap.relatedNoteIds, displayIndexById)}`);
+      lines.push(`   ${gap.reason}`);
+    });
+  }
+
+  lines.push("Related notes");
+  lines.push(formatRelatedResults(analysis.relatedNotes).trimEnd());
+
+  if (analysis.llmSkippedReason) {
+    lines.push(analysis.llmSkippedReason);
+  }
+
+  return `${lines.join("\n")}\n`;
+}
+
+function formatDisplayNoteReferences(noteIds: number[], displayIndexById: Map<number, number>): string {
+  const refs = noteIds
+    .map((id) => displayIndexById.get(id))
+    .filter((index): index is number => index !== undefined)
+    .map((index) => `[${index}]`);
+  return refs.length > 0 ? refs.join(" ") : "";
 }
 
 function formatReferencedNotes(noteIds: number[], titlesById: Map<number, string>): string {

@@ -49,6 +49,11 @@ test("parses related command with optional query", () => {
 });
 
 test("parses analysis commands with queries", () => {
+  assert.deepEqual(parseInput("/context oauth"), {
+    kind: "command",
+    name: "context",
+    args: "oauth"
+  });
   assert.deepEqual(parseInput("/decisions oauth"), {
     kind: "command",
     name: "decisions",
@@ -96,6 +101,7 @@ test("help text documents related command", () => {
   assert.match(helpText(), /\/amend <query>/);
   assert.match(helpText(), /\/edit <query>/);
   assert.match(helpText(), /\/related \[query\]/);
+  assert.match(helpText(), /\/context <query>/);
   assert.match(helpText(), /\/decisions <query>/);
   assert.match(helpText(), /\/gaps <query>/);
   assert.match(helpText(), /\/note <number>/);
@@ -151,6 +157,7 @@ test("completes slash command prefixes", () => {
   assert.deepEqual(completeSlashCommand("/rel"), [["/related"], "/rel"]);
   assert.deepEqual(completeSlashCommand("/ame"), [["/amend"], "/ame"]);
   assert.deepEqual(completeSlashCommand("/edi"), [["/edit"], "/edi"]);
+  assert.deepEqual(completeSlashCommand("/con"), [["/context"], "/con"]);
   assert.deepEqual(completeSlashCommand("/dec"), [["/decisions"], "/dec"]);
   assert.deepEqual(completeSlashCommand("/gap"), [["/gaps"], "/gap"]);
 });
