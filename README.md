@@ -105,7 +105,7 @@ Press Tab while typing a slash command to autocomplete matching commands, such a
 - `/amend <query>` appends a dated update to an existing saved note.
 - `/edit <query>` edits the raw capture of an existing saved note.
 - `/related [query]` finds saved notes related to the current note or supplied query.
-- `/context <query>` creates a concise knowledge snapshot from related saved notes. Its related notes are numbered for `/note` inspection.
+- `/context <query>` creates a concise knowledge snapshot from related saved notes, including a corpus summary of the notes used. Its related notes are numbered for `/note` inspection.
 - `/decisions <query>` synthesizes decisions and rationale from related notes.
 - `/gaps <query>` finds unexplained terms and entities in related notes.
 - `/note <number> [all|snippet|path|id|reason]` shows details for a numbered `/related` or `/context` result.

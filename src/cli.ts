@@ -571,6 +571,9 @@ function formatContextAnalysis(analysis: ContextAnalysisResult): string {
   const displayIndexById = new Map(analysis.relatedNotes.map((note, index) => [note.id, index + 1]));
   const lines = [`Context for ${analysis.query}:`];
 
+  lines.push("Corpus");
+  lines.push(...formatContextCorpus(analysis.relatedNotes));
+
   if (analysis.snapshot.length > 0) {
     lines.push("Snapshot");
     for (const item of analysis.snapshot) {
@@ -609,6 +612,67 @@ function formatContextAnalysis(analysis: ContextAnalysisResult): string {
   }
 
   return `${lines.join("\n")}\n`;
+}
+
+function formatContextCorpus(notes: RelatedResult[]): string[] {
+  const strengths = countBy(notes.map((note) => note.strength));
+  const dates = notes
+    .flatMap((note) => [note.createdAt.slice(0, 10), ...note.dates])
+    .filter(Boolean)
+    .sort();
+  const concepts = topCorpusConcepts(notes);
+  const lines = [
+    `- ${notes.length} related note${notes.length === 1 ? "" : "s"} used from local retrieval (${formatCounts(strengths)}).`,
+    `- Strongest notes: ${notes.slice(0, 4).map((note, index) => `[${index + 1}] ${note.title}`).join("; ")}.`
+  ];
+
+  if (dates.length > 0) {
+    const first = dates[0];
+    const last = dates.at(-1);
+    lines.push(first === last ? `- Dates represented: ${first}.` : `- Dates represented: ${first} to ${last}.`);
+  }
+
+  if (concepts.length > 0) {
+    lines.push(`- Recurring metadata: ${concepts.join(", ")}.`);
+  }
+
+  return lines;
+}
+
+function topCorpusConcepts(notes: RelatedResult[]): string[] {
+  const counts = new Map<string, number>();
+  const add = (value: string): void => {
+    const normalized = value.trim();
+    if (!normalized) {
+      return;
+    }
+    counts.set(normalized, (counts.get(normalized) ?? 0) + 1);
+  };
+
+  for (const note of notes) {
+    note.tags.forEach(add);
+    note.topics.forEach(add);
+    note.entities.map((entity) => entity.name).forEach(add);
+  }
+
+  return Array.from(counts.entries())
+    .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))
+    .slice(0, 8)
+    .map(([value]) => value);
+}
+
+function countBy(values: string[]): Map<string, number> {
+  const counts = new Map<string, number>();
+  for (const value of values) {
+    counts.set(value, (counts.get(value) ?? 0) + 1);
+  }
+  return counts;
+}
+
+function formatCounts(counts: Map<string, number>): string {
+  return Array.from(counts.entries())
+    .map(([value, count]) => `${count} ${value.toLowerCase()}`)
+    .join(", ");
 }
 
 function formatDisplayNoteReferences(noteIds: number[], displayIndexById: Map<number, number>): string {
