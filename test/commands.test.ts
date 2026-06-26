@@ -107,10 +107,15 @@ test("help text documents related command", () => {
   assert.match(helpText(), /\/note <number>/);
 });
 
-test("parses compose mode commands", () => {
+test("parses compose and multiline mode commands", () => {
   assert.deepEqual(parseInput("/compose"), {
     kind: "command",
     name: "compose",
+    args: ""
+  });
+  assert.deepEqual(parseInput("/multiline"), {
+    kind: "command",
+    name: "multiline",
     args: ""
   });
   assert.deepEqual(parseInput("/done"), {
@@ -157,9 +162,17 @@ test("completes slash command prefixes", () => {
   assert.deepEqual(completeSlashCommand("/rel"), [["/related"], "/rel"]);
   assert.deepEqual(completeSlashCommand("/ame"), [["/amend"], "/ame"]);
   assert.deepEqual(completeSlashCommand("/edi"), [["/edit"], "/edi"]);
+  assert.deepEqual(completeSlashCommand("/mul"), [["/multiline"], "/mul"]);
   assert.deepEqual(completeSlashCommand("/con"), [["/context"], "/con"]);
   assert.deepEqual(completeSlashCommand("/dec"), [["/decisions"], "/dec"]);
   assert.deepEqual(completeSlashCommand("/gap"), [["/gaps"], "/gap"]);
+});
+
+test("help text documents compose and multiline commands", () => {
+  assert.match(helpText(), /\/compose - open the current draft in your editor/);
+  assert.match(helpText(), /\/multiline - start multiline note capture/);
+  assert.match(helpText(), /\/done/);
+  assert.match(helpText(), /\/cancel/);
 });
 
 test("lists all slash commands for bare slash", () => {

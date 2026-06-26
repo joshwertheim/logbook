@@ -17,7 +17,7 @@ import type { ContextAnalysisResult, DecisionAnalysisResult, GapAnalysisResult, 
 const autosaveDelayMs = 2000;
 
 type ComposeBuffer =
-  | { kind: "compose"; lines: string[] }
+  | { kind: "multiline"; lines: string[] }
   | { kind: "amend"; lines: string[]; target: NoteResolutionCandidate };
 
 type PendingWrite =
@@ -121,7 +121,7 @@ async function main(): Promise<void> {
           composeBuffer = undefined;
           if (!text.trim()) {
             output.write("No multiline content captured.\n");
-          } else if (compose.kind === "compose") {
+          } else if (compose.kind === "multiline") {
             await session.append(text);
             output.write("captured multiline note\n");
             scheduleAutosave();
@@ -169,9 +169,31 @@ async function main(): Promise<void> {
 
       try {
         switch (parsed.name) {
-          case "compose":
-            composeBuffer = { kind: "compose", lines: [] };
-            output.write("Compose mode. Finish with /done or discard with /cancel.\n");
+          case "compose": {
+            if (!isTerminal) {
+              output.write("/compose requires an interactive terminal editor.\n");
+              break;
+            }
+            output.write("Opening current draft in your editor. Save and exit to replace the draft.\n");
+            rl.pause();
+            let edited: string;
+            try {
+              edited = await editRawCapture(session.raw);
+            } finally {
+              rl.resume();
+            }
+            if (!edited.trim()) {
+              output.write("Editor content was blank; current draft unchanged.\n");
+              break;
+            }
+            await session.replaceRawCapture(edited);
+            output.write("Updated current draft from editor.\n");
+            scheduleAutosave();
+            break;
+          }
+          case "multiline":
+            composeBuffer = { kind: "multiline", lines: [] };
+            output.write("Multiline mode. Finish with /done or discard with /cancel.\n");
             break;
           case "amend": {
             if (!parsed.args.trim()) {
@@ -227,10 +249,10 @@ async function main(): Promise<void> {
             break;
           }
           case "done":
-            output.write("Not currently composing. Use /compose, /amend, or /edit to start multiline capture.\n");
+            output.write("Not currently composing. Use /multiline or /amend to start multiline capture.\n");
             break;
           case "cancel":
-            output.write("Not currently composing. Use /compose, /amend, or /edit to start multiline capture.\n");
+            output.write("Not currently composing. Use /multiline or /amend to start multiline capture.\n");
             break;
           case "new":
             clearAutosave();

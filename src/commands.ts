@@ -17,6 +17,7 @@ export type SlashCommandName =
   | "index"
   | "provider"
   | "compose"
+  | "multiline"
   | "done"
   | "cancel"
   | "help"
@@ -59,6 +60,7 @@ export const slashCommands: SlashCommandName[] = [
   "index",
   "provider",
   "compose",
+  "multiline",
   "done",
   "cancel",
   "help",
@@ -122,7 +124,10 @@ export function helpText(): string {
     "/check <question> - check saved notes by natural date phrases, such as what happened today",
     "/index - index Markdown notes into SQLite",
     "/provider - show active model/provider config",
-    "/compose - start multiline note capture; finish with /done or discard with /cancel",
+    "/compose - open the current draft in your editor",
+    "/multiline - start multiline note capture; finish with /done or discard with /cancel",
+    "/done - finish multiline or amend capture",
+    "/cancel - discard multiline or amend capture",
     "/help - list commands",
     "/quit - exit"
   ].join("\n");

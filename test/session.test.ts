@@ -453,6 +453,37 @@ test("preserves multiline raw content in a single append", async () => {
   }
 });
 
+test("replaceRawCapture replaces current draft, clears processed content, and preserves saved identity", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "logbook-session-compose-replace-"));
+  const store = new NoteStore({
+    notesDir: path.join(dir, "notes"),
+    dbPath: path.join(dir, ".logbook", "logbook.sqlite")
+  });
+  const session = new NoteSession(store, new MockProvider());
+
+  try {
+    await session.append("Initial roadmap note.");
+    const first = session.save();
+    await session.process();
+
+    await session.replaceRawCapture("Line one\n\nLine three");
+
+    assert.equal(session.raw, "Line one\n\nLine three");
+    assert.equal(session.draft.processed, undefined);
+
+    const second = session.save();
+    assert.equal(second.id, first.id);
+    assert.equal(second.markdownPath, first.markdownPath);
+    assert.equal(fs.readdirSync(path.join(dir, "notes")).length, 1);
+
+    const draft = store.getDraft(first.id);
+    assert.equal(draft?.raw, "Line one\n\nLine three");
+    assert.equal(draft?.processed, undefined);
+  } finally {
+    store.close();
+  }
+});
+
 test("saving the same session updates the current note instead of duplicating it", async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "logbook-session-update-"));
   const store = new NoteStore({

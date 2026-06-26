@@ -48,6 +48,15 @@ export class NoteSession {
     return Promise.resolve();
   }
 
+  replaceRawCapture(raw: string): Promise<void> {
+    this.lines = [raw];
+    this.processed = undefined;
+    this.metadata = fallbackMetadata(this.raw);
+    this.dirty = true;
+    this.refreshMetadataInBackground();
+    return Promise.resolve();
+  }
+
   async newNote(): Promise<void> {
     this.metadataRevision += 1;
     if (this.dirty) {

@@ -89,7 +89,7 @@ LLM calls happen in these cases:
 - `/decisions <query>` first finds deterministic candidates locally, then asks the model to synthesize supported decisions, rationale, and related note references from `untrustedNotes` JSON. This command requires a configured provider when matching notes exist.
 - `/gaps <query>` first finds deterministic candidates locally, then asks the model to identify important unexplained terms, entities, acronyms, or project names from `untrustedNotes` JSON. This command requires a configured provider when matching notes exist.
 
-These commands do not call the LLM provider: `/save`, autosave, `/new`, `/search`, `/check`, `/index`, `/provider`, `/compose`, `/help`, and `/quit`.
+These commands do not call the LLM provider: `/save`, autosave, `/new`, `/search`, `/check`, `/index`, `/provider`, `/help`, and `/quit`.
 
 ## Commands
 
@@ -112,7 +112,10 @@ Press Tab while typing a slash command to autocomplete matching commands, such a
 - `/check <question>` checks saved notes by natural date phrases, such as `/check what happened today`.
 - `/index` indexes Markdown notes into SQLite.
 - `/provider` shows active provider configuration.
-- `/compose` starts multiline capture mode. Press Return for new lines, then enter `/done` to capture the block or `/cancel` to discard it.
+- `/compose` opens the current draft in `$VISUAL`, `$EDITOR`, or `vi`. Save and exit to replace the draft immediately; blank editor content leaves it unchanged.
+- `/multiline` starts multiline capture mode. Press Return for new lines, then enter `/done` to capture the block or `/cancel` to discard it.
+- `/done` finishes multiline or amend capture.
+- `/cancel` discards multiline or amend capture.
 - `/help` lists commands.
 - `/quit` exits cleanly.
 
