@@ -26,14 +26,8 @@ pnpm build
 pnpm add --global .
 ```
 
-[!TIP]
-
-If you have not set up `pnpm` before, you may need to run:
-
-```sh
-pnpm setup
-exec zsh -l
-```
+> [!TIP]
+> If you have not set up `pnpm` before, then you may need to run `pnpm setup` and start a new shell
 
 Then verify the command is available:
 
