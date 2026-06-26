@@ -140,6 +140,7 @@ export interface LlmRequest {
   messages: ChatMessage[];
   temperature?: number;
   maxTokens?: number;
+  timeoutMs?: number;
   responseFormat?: "json";
 }
 

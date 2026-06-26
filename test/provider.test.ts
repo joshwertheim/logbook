@@ -17,7 +17,22 @@ test("constructs OpenAI-compatible chat request", () => {
   assert.equal((request.init.headers as Record<string, string>).authorization, "Bearer test-key");
   const body = JSON.parse(request.init.body as string) as Record<string, unknown>;
   assert.equal(body.model, "local-model");
+  assert.equal(body.max_tokens, 1200);
   assert.deepEqual(body.response_format, { type: "json_object" });
+});
+
+test("explicit maxTokens overrides provider default", () => {
+  const request = createOpenAIChatRequest({
+    baseUrl: "https://api.openai.com/v1/",
+    apiKey: "test-key",
+    model: "model"
+  }, {
+    maxTokens: 42,
+    messages: [{ role: "user", content: "hello" }]
+  });
+
+  const body = JSON.parse(request.init.body as string) as Record<string, unknown>;
+  assert.equal(body.max_tokens, 42);
 });
 
 test("allows HTTPS provider URLs", () => {
@@ -118,5 +133,24 @@ test("provider reports insufficient quota with a concise message", async () => {
   await assert.rejects(
     provider.complete({ messages: [{ role: "user", content: "organize" }] }),
     /LLM provider quota is exhausted/
+  );
+});
+
+test("provider aborts timed out requests with concise timeout error", async () => {
+  const fetchImpl: typeof fetch = async (_url, init) => new Promise((_resolve, reject) => {
+    init?.signal?.addEventListener("abort", () => {
+      reject(new DOMException("Aborted", "AbortError"));
+    });
+  });
+
+  const provider = new OpenAICompatibleProvider({
+    baseUrl: "https://example.test/v1",
+    apiKey: "key",
+    model: "model"
+  }, fetchImpl);
+
+  await assert.rejects(
+    provider.complete({ timeoutMs: 1, messages: [{ role: "user", content: "organize" }] }),
+    /LLM request timed out after 1ms\./
   );
 });

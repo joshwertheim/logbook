@@ -7,7 +7,7 @@ import { createInterface } from "node:readline/promises";
 import { argv, stdin as input, stdout as output } from "node:process";
 import { spawn } from "node:child_process";
 import { parseCheckQuery } from "./check.js";
-import { completeSlashCommand, parseInput, helpText, parseRelatedArgs, parseRelatedSelectionArgs } from "./commands.js";
+import { completeSlashCommand, parseAnalysisArgs, parseInput, helpText, parseRelatedArgs, parseRelatedSelectionArgs } from "./commands.js";
 import { loadProviderEnv, type ProviderEnvLoadResult } from "./env.js";
 import { OpenAICompatibleProvider, providerConfigFromEnv, providerStatus, ProviderConfigError } from "./provider.js";
 import { NoteSession } from "./session.js";
@@ -323,30 +323,33 @@ async function main(): Promise<void> {
             break;
           }
           case "context": {
-            if (!parsed.args.trim()) {
-              output.write("Usage: /context <query>\n");
+            const analysisArgs = parseAnalysisArgs("context", parsed.args);
+            if (analysisArgs.error) {
+              output.write(`${analysisArgs.error}\n`);
               break;
             }
-            const analysis = await session.context(parsed.args);
+            const analysis = await session.context(analysisArgs);
             lastRelatedResults = analysis.relatedNotes;
             output.write(formatContextAnalysis(analysis));
             break;
           }
           case "decisions": {
-            if (!parsed.args.trim()) {
-              output.write("Usage: /decisions <query>\n");
+            const analysisArgs = parseAnalysisArgs("decisions", parsed.args);
+            if (analysisArgs.error) {
+              output.write(`${analysisArgs.error}\n`);
               break;
             }
-            const analysis = await session.decisions(parsed.args);
+            const analysis = await session.decisions(analysisArgs);
             output.write(formatDecisionAnalysis(analysis));
             break;
           }
           case "gaps": {
-            if (!parsed.args.trim()) {
-              output.write("Usage: /gaps <query>\n");
+            const analysisArgs = parseAnalysisArgs("gaps", parsed.args);
+            if (analysisArgs.error) {
+              output.write(`${analysisArgs.error}\n`);
               break;
             }
-            const analysis = await session.gaps(parsed.args);
+            const analysis = await session.gaps(analysisArgs);
             output.write(formatGapAnalysis(analysis));
             break;
           }

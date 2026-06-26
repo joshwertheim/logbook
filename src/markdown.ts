@@ -27,6 +27,19 @@ export function renderMarkdown(draft: NoteDraft): string {
   return `${frontmatter}\n# ${draft.metadata.title}\n\n## Raw Capture\n\n${draft.raw.trim()}\n${processed}`;
 }
 
+export function sanitizeGeneratedMarkdown(value: string): string {
+  return value
+    .split(/\r?\n/)
+    .filter((line) => {
+      const trimmed = line.trim();
+      return !/^<!--.*-->$/.test(trimmed) && !/^<\/?[a-z][\s\S]*>$/i.test(trimmed);
+    })
+    .join("\n")
+    .replace(/<!--[\s\S]*?-->/g, "")
+    .replace(/<\/?[a-z][a-z0-9:-]*(?:\s+[^<>]*)?>/gi, "")
+    .trim();
+}
+
 export function renderFrontmatter(metadata: NoteMetadata): string {
   return [
     "---",

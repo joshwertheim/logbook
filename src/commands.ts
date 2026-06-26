@@ -117,9 +117,9 @@ export function helpText(): string {
     "/amend <query> - append a dated update to an existing saved note",
     "/edit <query> - edit the raw capture of an existing saved note",
     "/related [query] - find saved notes related to the current note or supplied query",
-    "/context <query> - create a concise snapshot from related saved notes",
-    "/decisions <query> - synthesize decisions and rationale from related notes",
-    "/gaps <query> - find unexplained terms and entities in related notes",
+    "/context [--with-content] <query> - create a concise snapshot from related saved notes",
+    "/decisions [--with-content] <query> - synthesize decisions and rationale from related notes",
+    "/gaps [--with-content] <query> - find unexplained terms and entities in related notes",
     "/note <number> [all|snippet|path|id|reason] - show details for a numbered /related or /context result",
     "/check <question> - check saved notes by natural date phrases, such as what happened today",
     "/index - index Markdown notes into SQLite",
@@ -137,6 +137,12 @@ export interface RelatedCommandArgs {
   mode: "balanced";
   query: string;
   flags: string[];
+}
+
+export interface AnalysisCommandArgs {
+  query: string;
+  includeContent: boolean;
+  error?: string;
 }
 
 export type RelatedSelectionField = "all" | "snippet" | "path" | "id" | "reason";
@@ -164,6 +170,32 @@ export function parseRelatedArgs(args: string): RelatedCommandArgs {
     query: queryParts.join(" ").trim(),
     flags
   };
+}
+
+export function parseAnalysisArgs(command: "context" | "decisions" | "gaps", args: string): AnalysisCommandArgs {
+  const tokens = args.match(/"[^"]+"|'[^']+'|\S+/g) ?? [];
+  const queryParts: string[] = [];
+  let includeContent = false;
+
+  for (const token of tokens) {
+    if (token.startsWith("--")) {
+      if (token === "--with-content") {
+        includeContent = true;
+        continue;
+      }
+      return {
+        query: "",
+        includeContent: false,
+        error: `Usage: /${command} [--with-content] <query>`
+      };
+    }
+    queryParts.push(token.replace(/^(['"])(.*)\1$/, "$2"));
+  }
+
+  const query = queryParts.join(" ").trim();
+  return query
+    ? { query, includeContent }
+    : { query: "", includeContent, error: `Usage: /${command} [--with-content] <query>` };
 }
 
 export function parseRelatedSelectionArgs(args: string): RelatedSelectionArgs {

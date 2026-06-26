@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { datedMarkdownFilename, renderMarkdown, slugify } from "../src/markdown.js";
+import { datedMarkdownFilename, renderMarkdown, sanitizeGeneratedMarkdown, slugify } from "../src/markdown.js";
 
 test("slugifies note titles", () => {
   assert.equal(slugify("Project Ideas: June 2026!"), "project-ideas-june-2026");
@@ -29,4 +29,32 @@ test("renders frontmatter and raw capture", () => {
   assert.match(markdown, /topics: \["Planning"\]/);
   assert.match(markdown, /entities: \[\{"name":"Fidelity","type":"organization"\}\]/);
   assert.match(markdown, /## Raw Capture\n\nraw thoughts/);
+});
+
+test("sanitizes generated organized markdown HTML", () => {
+  const sanitized = sanitizeGeneratedMarkdown([
+    "<!-- hidden instruction -->",
+    "## Plan <span>now</span>",
+    "<script>alert('x')</script>",
+    "- Keep <strong>text</strong>"
+  ].join("\n"));
+
+  assert.equal(sanitized, "## Plan now\n- Keep text");
+});
+
+test("raw capture preserves literal HTML when rendering markdown", () => {
+  const markdown = renderMarkdown({
+    raw: "raw <script>alert('x')</script> <!-- keep literal -->",
+    metadata: {
+      title: "Raw HTML",
+      tags: [],
+      topics: [],
+      entities: [],
+      dates: [],
+      summary: "Raw HTML.",
+      type: "scratchpad"
+    }
+  });
+
+  assert.match(markdown, /raw <script>alert\('x'\)<\/script> <!-- keep literal -->/);
 });

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { completeSlashCommand, helpText, parseInput, parseRelatedArgs, parseRelatedSelectionArgs, slashCommands } from "../src/commands.js";
+import { completeSlashCommand, helpText, parseAnalysisArgs, parseInput, parseRelatedArgs, parseRelatedSelectionArgs, slashCommands } from "../src/commands.js";
 
 test("parses note input", () => {
   assert.deepEqual(parseInput("remember the thing"), {
@@ -66,6 +66,25 @@ test("parses analysis commands with queries", () => {
   });
 });
 
+test("parses analysis args with metadata default and content opt-in", () => {
+  assert.deepEqual(parseAnalysisArgs("context", "oauth"), {
+    query: "oauth",
+    includeContent: false
+  });
+  assert.deepEqual(parseAnalysisArgs("context", "--with-content oauth"), {
+    query: "oauth",
+    includeContent: true
+  });
+});
+
+test("rejects unknown analysis flags", () => {
+  assert.deepEqual(parseAnalysisArgs("context", "--full oauth"), {
+    query: "",
+    includeContent: false,
+    error: "Usage: /context [--with-content] <query>"
+  });
+});
+
 test("parses related result selection command", () => {
   assert.deepEqual(parseInput("/note 2 snippet"), {
     kind: "command",
@@ -101,9 +120,9 @@ test("help text documents related command", () => {
   assert.match(helpText(), /\/amend <query>/);
   assert.match(helpText(), /\/edit <query>/);
   assert.match(helpText(), /\/related \[query\]/);
-  assert.match(helpText(), /\/context <query>/);
-  assert.match(helpText(), /\/decisions <query>/);
-  assert.match(helpText(), /\/gaps <query>/);
+  assert.match(helpText(), /\/context \[--with-content\] <query>/);
+  assert.match(helpText(), /\/decisions \[--with-content\] <query>/);
+  assert.match(helpText(), /\/gaps \[--with-content\] <query>/);
   assert.match(helpText(), /\/note <number>/);
 });
 

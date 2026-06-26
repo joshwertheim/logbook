@@ -182,8 +182,11 @@ class DecisionAnalysisProvider implements LlmProvider {
     const prompt = request.messages.at(-1)?.content ?? "";
     if (prompt.includes("Find explicit or strongly implied decisions")) {
       this.called = true;
-      const parsed = JSON.parse(prompt) as { untrustedNotes: Array<{ id: number; content: string }> };
-      assert.match(parsed.untrustedNotes[0]?.content ?? "", /Use PKCE/);
+      const parsed = JSON.parse(prompt) as { contextMode: string; untrustedNotes: Array<{ id: number; content?: string; contentExcerpt?: string; snippet: string }> };
+      assert.equal(parsed.contextMode, "metadata+snippets");
+      assert.equal(parsed.untrustedNotes[0]?.content, undefined);
+      assert.equal(parsed.untrustedNotes[0]?.contentExcerpt, undefined);
+      assert.match(parsed.untrustedNotes[0]?.snippet ?? "", /Use PKCE/);
       return {
         content: JSON.stringify({
           decisions: [
@@ -209,8 +212,11 @@ class GapAnalysisProvider implements LlmProvider {
     const prompt = request.messages.at(-1)?.content ?? "";
     if (prompt.includes("Find important terms, entities, acronyms")) {
       this.called = true;
-      const parsed = JSON.parse(prompt) as { untrustedNotes: Array<{ id: number; content: string }> };
-      assert.match(parsed.untrustedNotes[0]?.content ?? "", /PKCE/);
+      const parsed = JSON.parse(prompt) as { contextMode: string; untrustedNotes: Array<{ id: number; content?: string; contentExcerpt?: string; snippet: string }> };
+      assert.equal(parsed.contextMode, "metadata+snippets");
+      assert.equal(parsed.untrustedNotes[0]?.content, undefined);
+      assert.equal(parsed.untrustedNotes[0]?.contentExcerpt, undefined);
+      assert.match(parsed.untrustedNotes[0]?.snippet ?? "", /PKCE/);
       return {
         content: JSON.stringify({
           gaps: [
@@ -236,8 +242,11 @@ class ContextAnalysisProvider implements LlmProvider {
     const prompt = request.messages.at(-1)?.content ?? "";
     if (prompt.includes("Create a concise knowledge snapshot")) {
       this.called = true;
-      const parsed = JSON.parse(prompt) as { untrustedNotes: Array<{ id: number; content: string }> };
-      assert.match(parsed.untrustedNotes[0]?.content ?? "", /PKCE/);
+      const parsed = JSON.parse(prompt) as { contextMode: string; untrustedNotes: Array<{ id: number; content?: string; contentExcerpt?: string; snippet: string }> };
+      assert.equal(parsed.contextMode, "metadata+snippets");
+      assert.equal(parsed.untrustedNotes[0]?.content, undefined);
+      assert.equal(parsed.untrustedNotes[0]?.contentExcerpt, undefined);
+      assert.match(parsed.untrustedNotes[0]?.snippet ?? "", /PKCE/);
       return {
         content: JSON.stringify({
           snapshot: ["PKCE is the chosen direction for the OAuth public client."],
@@ -277,6 +286,49 @@ class ContextAnalysisProvider implements LlmProvider {
 class MalformedAnalysisProvider implements LlmProvider {
   async complete(): Promise<{ content: string }> {
     return { content: JSON.stringify({ results: [] }) };
+  }
+}
+
+class RecordingContextProvider implements LlmProvider {
+  requests: LlmRequest[] = [];
+
+  async complete(request: LlmRequest): Promise<{ content: string }> {
+    this.requests.push(request);
+    const prompt = request.messages.at(-1)?.content ?? "";
+    if (prompt.includes("Create a concise knowledge snapshot")) {
+      return {
+        content: JSON.stringify({
+          snapshot: ["Recorded context."],
+          themes: [],
+          timeline: [],
+          gaps: []
+        })
+      };
+    }
+    return { content: "{}" };
+  }
+}
+
+class RecordingProcessProvider implements LlmProvider {
+  requests: LlmRequest[] = [];
+
+  async complete(request: LlmRequest): Promise<{ content: string }> {
+    this.requests.push(request);
+    const prompt = request.messages.at(-1)?.content ?? "";
+    if (prompt.includes("Extract lightweight metadata")) {
+      return {
+        content: JSON.stringify({
+          title: "Oversized Note",
+          tags: [],
+          topics: [],
+          entities: [],
+          dates: [],
+          summary: "Oversized note.",
+          type: "scratchpad"
+        })
+      };
+    }
+    return { content: "## Organized\n\nClean note." };
   }
 }
 
@@ -431,6 +483,31 @@ test("PII redaction does not mutate saved raw note content", async () => {
     assert.match(prompt, /\[REDACTED_PHONE_1\]/);
     assert.equal(saved.content, raw);
     assert.match(fs.readFileSync(saved.markdownPath, "utf8"), /jane@example\.com/);
+  } finally {
+    store.close();
+  }
+});
+
+test("current note provider prompts clamp oversized raw content without mutating saved content", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "logbook-session-current-note-clamp-"));
+  const store = new NoteStore({
+    notesDir: path.join(dir, "notes"),
+    dbPath: path.join(dir, ".logbook", "logbook.sqlite")
+  });
+  const provider = new RecordingProcessProvider();
+  const session = new NoteSession(store, provider);
+  const raw = `Oversized note\n${"alpha ".repeat(3000)}`;
+
+  try {
+    await session.append(raw);
+    await session.process();
+    const saved = session.save();
+
+    const processPrompt = provider.requests.find((request) => (request.messages.at(-1)?.content ?? "").includes("Lightly organize"))?.messages.at(-1)?.content ?? "";
+    const parsed = JSON.parse(processPrompt) as { untrustedNote: string };
+    assert.equal(parsed.untrustedNote.length, 12000);
+    assert.equal(saved.content, session.raw);
+    assert.ok(saved.content.length > parsed.untrustedNote.length);
   } finally {
     store.close();
   }
@@ -1115,6 +1192,83 @@ test("context analysis parses provider results and filters invalid note ids", as
   }
 });
 
+test("context analysis defaults to metadata and snippets without full raw content", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "logbook-session-context-metadata-only-"));
+  const store = new NoteStore({
+    notesDir: path.join(dir, "notes"),
+    dbPath: path.join(dir, ".logbook", "logbook.sqlite")
+  });
+  const provider = new RecordingContextProvider();
+  const session = new NoteSession(store, provider);
+
+  try {
+    const oversized = `OAuth implementation note: PKCE is required.\n${"secret raw detail ".repeat(400)}`;
+    store.saveDraft({
+      raw: oversized,
+      metadata: {
+        title: "OAuth Client Notes",
+        tags: ["oauth"],
+        topics: ["OAuth"],
+        entities: [{ name: "PKCE", type: "security" }],
+        dates: [],
+        summary: "OAuth note mentioning PKCE.",
+        type: "research"
+      }
+    }, new Date("2026-06-20T12:00:00Z"));
+
+    await session.context("oauth");
+
+    const prompt = provider.requests[0]?.messages.at(-1)?.content ?? "";
+    const parsed = JSON.parse(prompt) as { contextMode: string; untrustedNotes: Array<{ content?: string; contentExcerpt?: string; snippet: string }> };
+    assert.equal(parsed.contextMode, "metadata+snippets");
+    assert.equal(parsed.untrustedNotes[0]?.content, undefined);
+    assert.equal(parsed.untrustedNotes[0]?.contentExcerpt, undefined);
+    assert.match(parsed.untrustedNotes[0]?.snippet ?? "", /PKCE/);
+    assert.ok((parsed.untrustedNotes[0]?.snippet ?? "").length < oversized.length);
+    assert.ok(prompt.length < oversized.length);
+  } finally {
+    store.close();
+  }
+});
+
+test("context analysis with content includes bounded excerpts only", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "logbook-session-context-with-content-"));
+  const store = new NoteStore({
+    notesDir: path.join(dir, "notes"),
+    dbPath: path.join(dir, ".logbook", "logbook.sqlite")
+  });
+  const provider = new RecordingContextProvider();
+  const session = new NoteSession(store, provider);
+
+  try {
+    const oversized = `OAuth implementation note: PKCE is required.\n${"raw-detail ".repeat(2000)}`;
+    store.saveDraft({
+      raw: oversized,
+      metadata: {
+        title: "OAuth Client Notes",
+        tags: ["oauth"],
+        topics: ["OAuth"],
+        entities: [{ name: "PKCE", type: "security" }],
+        dates: [],
+        summary: "OAuth note mentioning PKCE.",
+        type: "research"
+      }
+    }, new Date("2026-06-20T12:00:00Z"));
+
+    await session.context({ query: "oauth", includeContent: true });
+
+    const prompt = provider.requests[0]?.messages.at(-1)?.content ?? "";
+    const parsed = JSON.parse(prompt) as { contextMode: string; untrustedNotes: Array<{ content?: string; contentExcerpt?: string }> };
+    assert.equal(parsed.contextMode, "metadata+bounded-content-excerpts");
+    assert.equal(parsed.untrustedNotes[0]?.content, undefined);
+    assert.match(parsed.untrustedNotes[0]?.contentExcerpt ?? "", /PKCE/);
+    assert.ok((parsed.untrustedNotes[0]?.contentExcerpt ?? "").length <= 1200);
+    assert.ok(prompt.length < oversized.length);
+  } finally {
+    store.close();
+  }
+});
+
 test("context analysis falls back locally on malformed provider response", async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "logbook-session-context-malformed-"));
   const store = new NoteStore({
@@ -1158,7 +1312,7 @@ test("context analysis rejects empty query", async () => {
   try {
     await assert.rejects(
       session.context("   "),
-      /Usage: \/context <query>/
+      /Usage: \/context \[--with-content\] <query>/
     );
   } finally {
     store.close();

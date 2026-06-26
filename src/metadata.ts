@@ -1,5 +1,5 @@
 import { metadataExtractionPrompt, noteTakingSystemPrompt, summaryPrompt, tagsPrompt } from "./prompts.js";
-import { boundedString, cappedArray, clampText, llmEnvelope, untrustedNoteRules } from "./llmSafety.js";
+import { boundedString, cappedArray, clampCurrentNoteForLlm, clampText, llmEnvelope, untrustedNoteRules } from "./llmSafety.js";
 import type { EntityType, LlmProvider, NoteEntity, NoteMetadata, NoteType } from "./types.js";
 import { z } from "zod";
 
@@ -29,6 +29,7 @@ export async function extractMetadata(raw: string, provider?: LlmProvider): Prom
   try {
     const response = await provider.complete({
       responseFormat: "json",
+      maxTokens: 500,
       temperature: 0.1,
       messages: [
         { role: "system", content: noteTakingSystemPrompt },
@@ -37,7 +38,7 @@ export async function extractMetadata(raw: string, provider?: LlmProvider): Prom
           content: llmEnvelope({
             task: metadataExtractionPrompt,
             rules: untrustedNoteRules,
-            untrustedNote: raw
+            untrustedNote: clampCurrentNoteForLlm(raw)
           })
         }
       ]
@@ -50,6 +51,7 @@ export async function extractMetadata(raw: string, provider?: LlmProvider): Prom
 
 export async function generateSummary(raw: string, provider: LlmProvider): Promise<string> {
   const response = await provider.complete({
+    maxTokens: 250,
     temperature: 0.2,
     messages: [
       { role: "system", content: noteTakingSystemPrompt },
@@ -58,7 +60,7 @@ export async function generateSummary(raw: string, provider: LlmProvider): Promi
         content: llmEnvelope({
           task: summaryPrompt,
           rules: untrustedNoteRules,
-          untrustedNote: raw
+          untrustedNote: clampCurrentNoteForLlm(raw)
         })
       }
     ]
@@ -94,6 +96,7 @@ export function fallbackTags(raw: string): string[] {
 export async function generateTags(raw: string, provider: LlmProvider): Promise<string[]> {
   const response = await provider.complete({
     responseFormat: "json",
+    maxTokens: 300,
     temperature: 0.1,
     messages: [
       { role: "system", content: noteTakingSystemPrompt },
@@ -102,7 +105,7 @@ export async function generateTags(raw: string, provider: LlmProvider): Promise<
         content: llmEnvelope({
           task: tagsPrompt,
           rules: untrustedNoteRules,
-          untrustedNote: raw
+          untrustedNote: clampCurrentNoteForLlm(raw)
         })
       }
     ]

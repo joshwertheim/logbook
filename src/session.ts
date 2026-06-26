@@ -1,6 +1,7 @@
 import { organizationPrompt, noteTakingSystemPrompt } from "./prompts.js";
 import { generateSummary, generateTags, extractMetadata, fallbackMetadata, fallbackSummary, fallbackTags, refreshMetadata } from "./metadata.js";
-import { cappedArray, llmEnvelope, nonEmptyBoundedString, untrustedNoteRules } from "./llmSafety.js";
+import { candidatesForAnalysis, clampAnalysisQuery, clampCurrentNoteForLlm, cappedArray, llmEnvelope, nonEmptyBoundedString, untrustedNoteRules } from "./llmSafety.js";
+import { sanitizeGeneratedMarkdown } from "./markdown.js";
 import type { CheckResult, ContextAnalysisResult, ContextTheme, ContextTimelineItem, DecisionAnalysisItem, DecisionAnalysisResult, GapAnalysisItem, GapAnalysisResult, LlmProvider, NoteDraft, NoteMetadata, NoteResolutionCandidate, NoteResolutionResult, RelatedLookupResult, RelatedResult, RelatedStrength, SavedNote, SearchResult } from "./types.js";
 import type { DateCheckQuery } from "./check.js";
 import { ProviderConfigError } from "./provider.js";
@@ -13,6 +14,11 @@ export interface RelatedRequest {
 }
 
 type RelatedVisibilityMode = "balanced";
+
+export interface AnalysisRequest {
+  query: string;
+  includeContent?: boolean;
+}
 
 export class NoteSession {
   private lines: string[] = [];
@@ -75,6 +81,7 @@ export class NoteSession {
       throw new ProviderConfigError();
     }
     const response = await this.provider.complete({
+      maxTokens: 1600,
       temperature: 0.25,
       messages: [
         { role: "system", content: noteTakingSystemPrompt },
@@ -83,12 +90,12 @@ export class NoteSession {
           content: llmEnvelope({
             task: organizationPrompt,
             rules: untrustedNoteRules,
-            untrustedNote: this.raw
+            untrustedNote: clampCurrentNoteForLlm(this.raw)
           })
         }
       ]
     });
-    this.processed = response.content.trim();
+    this.processed = sanitizeGeneratedMarkdown(response.content);
     this.dirty = true;
     return this.processed;
   }
@@ -286,10 +293,11 @@ export class NoteSession {
     }
   }
 
-  async decisions(query: string): Promise<DecisionAnalysisResult> {
-    const trimmed = query.trim();
+  async decisions(request: string | AnalysisRequest): Promise<DecisionAnalysisResult> {
+    const analysisRequest = normalizeAnalysisRequest(request);
+    const trimmed = analysisRequest.query;
     if (!trimmed) {
-      throw new Error("Usage: /decisions <query>");
+      throw new Error("Usage: /decisions [--with-content] <query>");
     }
 
     const candidates = this.store.relatedToQuery(trimmed).slice(0, 12);
@@ -303,15 +311,16 @@ export class NoteSession {
 
     return {
       query: trimmed,
-      decisions: await analyzeDecisions(trimmed, candidates, this.provider),
+      decisions: await analyzeDecisions(analysisRequest, candidates, this.provider),
       relatedNotes: candidates
     };
   }
 
-  async gaps(query: string): Promise<GapAnalysisResult> {
-    const trimmed = query.trim();
+  async gaps(request: string | AnalysisRequest): Promise<GapAnalysisResult> {
+    const analysisRequest = normalizeAnalysisRequest(request);
+    const trimmed = analysisRequest.query;
     if (!trimmed) {
-      throw new Error("Usage: /gaps <query>");
+      throw new Error("Usage: /gaps [--with-content] <query>");
     }
 
     const candidates = this.store.relatedToQuery(trimmed).slice(0, 12);
@@ -325,15 +334,16 @@ export class NoteSession {
 
     return {
       query: trimmed,
-      gaps: await analyzeGaps(trimmed, candidates, this.provider),
+      gaps: await analyzeGaps(analysisRequest, candidates, this.provider),
       relatedNotes: candidates
     };
   }
 
-  async context(query: string): Promise<ContextAnalysisResult> {
-    const trimmed = query.trim();
+  async context(request: string | AnalysisRequest): Promise<ContextAnalysisResult> {
+    const analysisRequest = normalizeAnalysisRequest(request);
+    const trimmed = analysisRequest.query;
     if (!trimmed) {
-      throw new Error("Usage: /context <query>");
+      throw new Error("Usage: /context [--with-content] <query>");
     }
 
     const candidates = this.store.relatedToQuery(trimmed).slice(0, 12);
@@ -359,7 +369,7 @@ export class NoteSession {
     try {
       return {
         query: trimmed,
-        ...(await analyzeContext(trimmed, relatedNotes, this.provider)),
+        ...(await analyzeContext(analysisRequest, relatedNotes, this.provider)),
         relatedNotes
       };
     } catch (error) {
@@ -419,9 +429,16 @@ export class NoteSession {
   }
 }
 
-async function analyzeDecisions(query: string, candidates: RelatedResult[], provider: LlmProvider): Promise<DecisionAnalysisItem[]> {
+function normalizeAnalysisRequest(request: string | AnalysisRequest): AnalysisRequest {
+  return typeof request === "string"
+    ? { query: clampAnalysisQuery(request), includeContent: false }
+    : { query: clampAnalysisQuery(request.query), includeContent: request.includeContent ?? false };
+}
+
+async function analyzeDecisions(request: AnalysisRequest, candidates: RelatedResult[], provider: LlmProvider): Promise<DecisionAnalysisItem[]> {
   const response = await provider.complete({
     responseFormat: "json",
+    maxTokens: 1200,
     temperature: 0.1,
     messages: [
       {
@@ -433,8 +450,9 @@ async function analyzeDecisions(query: string, candidates: RelatedResult[], prov
         content: llmEnvelope({
           task: "Find explicit or strongly implied decisions related to the query. Group the same decision across notes. Include rationale only when supported by the notes. Return {\"decisions\":[{\"decision\":\"short decision\",\"rationale\":\"why this decision appears to have been made\",\"status\":\"optional current state\",\"confidence\":\"High|Medium|Low\",\"relatedNoteIds\":[number]}]}. If no decisions are supported, return {\"decisions\":[]}.",
           rules: untrustedNoteRules,
-          query,
-          untrustedNotes: candidates.map(candidateForAnalysis)
+          query: request.query,
+          contextMode: request.includeContent ? "metadata+bounded-content-excerpts" : "metadata+snippets",
+          untrustedNotes: candidatesForAnalysis(candidates, { includeContent: request.includeContent ?? false })
         })
       }
     ]
@@ -443,9 +461,10 @@ async function analyzeDecisions(query: string, candidates: RelatedResult[], prov
   return parseDecisionAnalysisResponse(response.content, candidates);
 }
 
-async function analyzeGaps(query: string, candidates: RelatedResult[], provider: LlmProvider): Promise<GapAnalysisItem[]> {
+async function analyzeGaps(request: AnalysisRequest, candidates: RelatedResult[], provider: LlmProvider): Promise<GapAnalysisItem[]> {
   const response = await provider.complete({
     responseFormat: "json",
+    maxTokens: 1200,
     temperature: 0.1,
     messages: [
       {
@@ -457,8 +476,9 @@ async function analyzeGaps(query: string, candidates: RelatedResult[], provider:
         content: llmEnvelope({
           task: "Find important terms, entities, acronyms, or project names related to the query that are mentioned but not explained or defined in the provided notes. Do not include common words or concepts explained in the notes. Return {\"gaps\":[{\"term\":\"term\",\"whyItMatters\":\"why it matters for understanding these notes\",\"evidence\":\"brief note-based evidence that it is mentioned but not explained\",\"suggestedQuestion\":\"question to answer later\",\"relatedNoteIds\":[number]}]}. If no gaps are supported, return {\"gaps\":[]}.",
           rules: untrustedNoteRules,
-          query,
-          untrustedNotes: candidates.map(candidateForAnalysis)
+          query: request.query,
+          contextMode: request.includeContent ? "metadata+bounded-content-excerpts" : "metadata+snippets",
+          untrustedNotes: candidatesForAnalysis(candidates, { includeContent: request.includeContent ?? false })
         })
       }
     ]
@@ -467,9 +487,10 @@ async function analyzeGaps(query: string, candidates: RelatedResult[], provider:
   return parseGapAnalysisResponse(response.content, candidates);
 }
 
-async function analyzeContext(query: string, candidates: RelatedResult[], provider: LlmProvider): Promise<Omit<ContextAnalysisResult, "query" | "relatedNotes" | "llmSkippedReason">> {
+async function analyzeContext(request: AnalysisRequest, candidates: RelatedResult[], provider: LlmProvider): Promise<Omit<ContextAnalysisResult, "query" | "relatedNotes" | "llmSkippedReason">> {
   const response = await provider.complete({
     responseFormat: "json",
+    maxTokens: 1200,
     temperature: 0.1,
     messages: [
       {
@@ -481,30 +502,15 @@ async function analyzeContext(query: string, candidates: RelatedResult[], provid
         content: llmEnvelope({
           task: "Create a concise knowledge snapshot for the query. Return {\"snapshot\":[\"brief bullet\"],\"themes\":[{\"title\":\"theme\",\"details\":\"note-supported details\",\"relatedNoteIds\":[number]}],\"timeline\":[{\"date\":\"date or date phrase\",\"event\":\"brief event\",\"relatedNoteIds\":[number]}],\"gaps\":[{\"question\":\"question to answer later\",\"reason\":\"why the notes do not fully answer it\",\"relatedNoteIds\":[number]}]}. Keep it brief, only cite provided note IDs, and return empty arrays when unsupported.",
           rules: untrustedNoteRules,
-          query,
-          untrustedNotes: candidates.map(candidateForAnalysis)
+          query: request.query,
+          contextMode: request.includeContent ? "metadata+bounded-content-excerpts" : "metadata+snippets",
+          untrustedNotes: candidatesForAnalysis(candidates, { includeContent: request.includeContent ?? false })
         })
       }
     ]
   });
 
   return parseContextAnalysisResponse(response.content, candidates);
-}
-
-function candidateForAnalysis(candidate: RelatedResult): Record<string, unknown> {
-  return {
-    id: candidate.id,
-    title: candidate.title,
-    summary: candidate.summary,
-    tags: candidate.tags,
-    topics: candidate.topics,
-    entities: candidate.entities,
-    dates: candidate.dates,
-    noteType: candidate.noteType,
-    deterministicScore: candidate.score,
-    deterministicReasons: candidate.reasons,
-    content: candidate.content
-  };
 }
 
 const relevanceSchema = z.number().finite().transform((value) => Math.max(0, Math.min(100, value)));
@@ -761,6 +767,7 @@ function dominantCandidate(candidates: NoteResolutionCandidate[]): NoteResolutio
 async function rerankResolutionCandidates(candidates: NoteResolutionCandidate[], query: string, provider: LlmProvider): Promise<NoteResolutionCandidate[]> {
   const response = await provider.complete({
     responseFormat: "json",
+    maxTokens: 700,
     temperature: 0.1,
     messages: [
       {
@@ -772,7 +779,7 @@ async function rerankResolutionCandidates(candidates: NoteResolutionCandidate[],
         content: llmEnvelope({
           task: "Rerank note candidates for the query. Omit unrelated candidates. Return {\"results\":[{\"id\":number,\"relevance\":number,\"explanation\":\"short reason\"}]}",
           rules: untrustedNoteRules,
-          query,
+          query: clampAnalysisQuery(query),
           untrustedNotes: candidates.map((candidate) => ({
             id: candidate.id,
             title: candidate.title,
@@ -829,6 +836,7 @@ function localDate(now: Date): string {
 async function rerankRelatedResults(candidates: RelatedResult[], source: string, provider: LlmProvider): Promise<RelatedResult[]> {
   const response = await provider.complete({
     responseFormat: "json",
+    maxTokens: 700,
     temperature: 0.1,
     messages: [
       {
@@ -840,7 +848,7 @@ async function rerankRelatedResults(candidates: RelatedResult[], source: string,
         content: llmEnvelope({
           task: "Rerank related notes for the source text. Omit unrelated candidates entirely. Return {\"results\":[{\"id\":number,\"relevance\":number,\"strength\":\"Strong|Moderate|Weak\",\"explanation\":\"short reason\"}]}",
           rules: untrustedNoteRules,
-          untrustedNote: source,
+          untrustedNote: clampCurrentNoteForLlm(source),
           untrustedNotes: candidates.map((candidate) => ({
             id: candidate.id,
             title: candidate.title,

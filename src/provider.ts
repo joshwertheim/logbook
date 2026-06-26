@@ -1,5 +1,8 @@
 import type { LlmProvider, LlmRequest, LlmResponse } from "./types.js";
 
+const defaultProviderMaxTokens = 1200;
+const defaultProviderTimeoutMs = 30000;
+
 export class ProviderConfigError extends Error {
   constructor(message = "LLM provider is not configured. Set LLM_BASE_URL, LLM_API_KEY, and LLM_MODEL.") {
     super(message);
@@ -86,9 +89,7 @@ export function createOpenAIChatRequest(config: ConfiguredOpenAICompatibleConfig
     temperature: request.temperature ?? 0.2
   };
 
-  if (request.maxTokens !== undefined) {
-    body.max_tokens = request.maxTokens;
-  }
+  body.max_tokens = request.maxTokens ?? defaultProviderMaxTokens;
 
   if (request.responseFormat === "json") {
     body.response_format = { type: "json_object" };
@@ -141,21 +142,38 @@ export class OpenAICompatibleProvider implements LlmProvider {
       throw new ProviderConfigError();
     }
 
-    const { url, init } = createOpenAIChatRequest(this.config, request);
-    const response = await this.fetchImpl(url, init);
-    if (!response.ok) {
-      const text = await response.text();
-      throw new ProviderRequestError(response.status, text);
-    }
+    const timeoutMs = request.timeoutMs ?? defaultProviderTimeoutMs;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
-    const payload = await response.json() as {
-      choices?: Array<{ message?: { content?: string } }>;
-    };
-    const content = payload.choices?.[0]?.message?.content;
-    if (!content) {
-      throw new Error("LLM response did not include assistant content.");
-    }
+    try {
+      const { url, init } = createOpenAIChatRequest(this.config, request);
+      const response = await this.fetchImpl(url, { ...init, signal: controller.signal });
+      if (!response.ok) {
+        const text = await response.text();
+        throw new ProviderRequestError(response.status, text);
+      }
 
-    return { content, raw: payload };
+      const payload = await response.json() as {
+        choices?: Array<{ message?: { content?: string } }>;
+      };
+      const content = payload.choices?.[0]?.message?.content;
+      if (!content) {
+        throw new Error("LLM response did not include assistant content.");
+      }
+
+      return { content, raw: payload };
+    } catch (error) {
+      if (controller.signal.aborted || isAbortError(error)) {
+        throw new Error(`LLM request timed out after ${timeoutMs}ms.`, { cause: error });
+      }
+      throw error;
+    } finally {
+      clearTimeout(timeout);
+    }
   }
+}
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof Error && error.name === "AbortError";
 }
