@@ -8,6 +8,7 @@ Logbook is a CLI-first TypeScript project. Source files live in `src/`, with `sr
 
 - `pnpm install` installs dependencies using the checked-in lockfile.
 - `pnpm build` compiles TypeScript to `dist/`.
+- `pnpm lint` runs ESLint over `src/` and `test/`.
 - `pnpm typecheck` runs strict TypeScript checks without writing output.
 - `pnpm test` builds first, then runs Node's built-in test runner against `dist/test/*.test.js`.
 - `pnpm start` builds and launches the CLI from `dist/src/cli.js`.
@@ -16,11 +17,11 @@ Node.js 24+ and pnpm are required. For provider-backed flows, configure `LLM_BAS
 
 ## Coding Style & Naming Conventions
 
-Use strict TypeScript with ES modules and explicit `.js` extensions for local imports, matching the existing NodeNext setup. Prefer small, focused modules and named exports for reusable behavior. Use two-space indentation, double quotes, semicolons, and descriptive camelCase names for functions, variables, and test helpers. Keep CLI command names slash-based and user-facing text concise.
+Use strict TypeScript with ES modules and explicit `.js` extensions for local imports, matching the existing NodeNext setup. Prefer small, focused modules and named exports for reusable behavior. Use two-space indentation, double quotes, semicolons, and descriptive camelCase names for functions, variables, and test helpers. ESLint enforces recommended JavaScript/TypeScript rules, type-only imports, and unused-variable checks. Keep CLI command names slash-based and user-facing text concise.
 
 ## Testing Guidelines
 
-Tests use `node:test` with `node:assert/strict`. Add tests under `test/` using the pattern `<module>.test.ts`, and keep fixtures local to the test unless they are reused broadly. Run `pnpm test` before submitting changes; run `pnpm typecheck` when editing types, provider contracts, or storage/session boundaries.
+Tests use `node:test` with `node:assert/strict`. Add tests under `test/` using the pattern `<module>.test.ts`, and keep fixtures local to the test unless they are reused broadly. Run `pnpm lint` and `pnpm test` before submitting changes; run `pnpm typecheck` when editing types, provider contracts, or storage/session boundaries.
 
 ## Commit & Pull Request Guidelines
 

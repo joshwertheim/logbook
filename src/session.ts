@@ -1,10 +1,10 @@
 import { organizationPrompt, noteTakingSystemPrompt } from "./prompts.js";
 import { generateSummary, generateTags, extractMetadata, fallbackMetadata, fallbackSummary, fallbackTags, refreshMetadata } from "./metadata.js";
 import { cappedArray, llmEnvelope, nonEmptyBoundedString, untrustedNoteRules } from "./llmSafety.js";
-import type { CheckResult, ContextAnalysisResult, ContextGap, ContextTheme, ContextTimelineItem, DecisionAnalysisItem, DecisionAnalysisResult, GapAnalysisItem, GapAnalysisResult, LlmProvider, NoteDraft, NoteMetadata, NoteResolutionCandidate, NoteResolutionResult, RelatedLookupResult, RelatedResult, RelatedStrength, SavedNote, SearchResult } from "./types.js";
+import type { CheckResult, ContextAnalysisResult, ContextTheme, ContextTimelineItem, DecisionAnalysisItem, DecisionAnalysisResult, GapAnalysisItem, GapAnalysisResult, LlmProvider, NoteDraft, NoteMetadata, NoteResolutionCandidate, NoteResolutionResult, RelatedLookupResult, RelatedResult, RelatedStrength, SavedNote, SearchResult } from "./types.js";
 import type { DateCheckQuery } from "./check.js";
 import { ProviderConfigError } from "./provider.js";
-import { NoteStore } from "./storage.js";
+import type { NoteStore } from "./storage.js";
 import { z } from "zod";
 
 export interface RelatedRequest {
@@ -969,10 +969,6 @@ function strengthRank(strength: RelatedStrength): number {
     case "Weak":
       return 1;
   }
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
 }
 
 const genericRelatedKeywords = new Set([
