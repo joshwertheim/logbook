@@ -15,6 +15,38 @@ pnpm build
 pnpm start
 ```
 
+## Install
+
+To install Logbook locally with pnpm so the `logbook` command is available from
+your shell:
+
+```sh
+pnpm install
+pnpm build
+pnpm add --global .
+```
+
+[!TIP]
+
+If you have not set up `pnpm` before, you may need to run:
+
+```sh
+pnpm setup
+exec zsh -l
+```
+
+Then verify the command is available:
+
+```sh
+which logbook
+logbook
+```
+
+This installs the package's `logbook` binary from `dist/src/cli.js`.
+
+After changing TypeScript source, run `pnpm build` again so `logbook` uses the
+latest compiled output.
+
 ## Provider Configuration
 
 The first provider is OpenAI-compatible and uses `fetch`.
