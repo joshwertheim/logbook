@@ -51,17 +51,28 @@ export LLM_API_KEY="..."
 export LLM_MODEL="gpt-4.1-mini"
 ```
 
-You can also put those values in a root-level `.env` file:
+You can also put those values in a user-level config file:
 
 ```sh
+mkdir -p "${XDG_CONFIG_HOME:-$HOME/.config}/logbook"
+$EDITOR "${XDG_CONFIG_HOME:-$HOME/.config}/logbook/config.env"
+```
+
+```env
 LLM_BASE_URL=https://api.openai.com/v1
 LLM_API_KEY=...
 LLM_MODEL=gpt-4.1-mini
 ```
 
-Environment variables already set in your shell take precedence over `.env` values.
+Environment variables already set in your shell take precedence over config file values. By default, Logbook reads `$XDG_CONFIG_HOME/logbook/config.env`, falling back to `~/.config/logbook/config.env`. To use an explicit config file, set `LOGBOOK_CONFIG` to an absolute path:
 
-Local OpenAI-compatible servers can also work if they expose `/chat/completions`.
+```sh
+LOGBOOK_CONFIG=/absolute/path/to/config.env logbook
+```
+
+Logbook does not auto-load `./.env` from the directory where it is run. If you previously used a root-level `.env`, move those provider values to the user config file or launch Logbook with `LOGBOOK_CONFIG=/absolute/path/to/config.env`.
+
+Provider URLs must use HTTPS unless they point to a loopback HTTP server: `http://localhost`, `http://127.0.0.1`, or `http://[::1]`. Local OpenAI-compatible servers can work if they expose `/chat/completions`.
 
 ### OpenRouter and cheap models
 

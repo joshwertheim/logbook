@@ -1,12 +1,37 @@
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 
-export function loadDotEnv(cwd = process.cwd(), env: NodeJS.ProcessEnv = process.env): void {
-  const envPath = path.join(cwd, ".env");
-  if (!fs.existsSync(envPath)) {
-    return;
+const providerKeys = ["LLM_BASE_URL", "LLM_API_KEY", "LLM_MODEL"] as const;
+
+export type ProviderEnvSource = "shell" | "explicit-config" | "user-config" | "unset";
+
+export interface ProviderEnvLoadOptions {
+  env?: NodeJS.ProcessEnv;
+  homeDir?: string;
+}
+
+export interface ProviderEnvLoadResult {
+  source: ProviderEnvSource;
+  path?: string;
+}
+
+export function loadProviderEnv(options: ProviderEnvLoadOptions = {}): ProviderEnvLoadResult {
+  const env = options.env ?? process.env;
+  const explicitConfig = env.LOGBOOK_CONFIG;
+  const userConfigPath = path.join(env.XDG_CONFIG_HOME ?? path.join(options.homeDir ?? os.homedir(), ".config"), "logbook", "config.env");
+  const configPath = explicitConfig && path.isAbsolute(explicitConfig) ? explicitConfig : userConfigPath;
+  const configSource: ProviderEnvSource = explicitConfig && path.isAbsolute(explicitConfig) ? "explicit-config" : "user-config";
+
+  if (fs.existsSync(configPath)) {
+    loadEnvFile(configPath, env);
+    return { source: configSource, path: configPath };
   }
 
+  return providerKeys.some((key) => env[key] !== undefined) ? { source: "shell" } : { source: "unset" };
+}
+
+function loadEnvFile(envPath: string, env: NodeJS.ProcessEnv): void {
   const values = parseDotEnv(fs.readFileSync(envPath, "utf8"));
   for (const [key, value] of Object.entries(values)) {
     if (env[key] === undefined) {

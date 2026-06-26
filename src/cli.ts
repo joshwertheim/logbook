@@ -8,7 +8,7 @@ import { argv, stdin as input, stdout as output } from "node:process";
 import { spawn } from "node:child_process";
 import { parseCheckQuery } from "./check.js";
 import { completeSlashCommand, parseInput, helpText, parseRelatedArgs, parseRelatedSelectionArgs } from "./commands.js";
-import { loadDotEnv } from "./env.js";
+import { loadProviderEnv, type ProviderEnvLoadResult } from "./env.js";
 import { OpenAICompatibleProvider, providerConfigFromEnv, providerStatus, ProviderConfigError } from "./provider.js";
 import { NoteSession } from "./session.js";
 import { defaultStoragePaths, NoteStore } from "./storage.js";
@@ -35,8 +35,11 @@ async function main(): Promise<void> {
     return;
   }
 
-  loadDotEnv();
-  const config = providerConfigFromEnv();
+  const configLoad = loadProviderEnv();
+  const config = {
+    ...providerConfigFromEnv(),
+    source: formatProviderEnvSource(configLoad)
+  };
   const provider = new OpenAICompatibleProvider(config);
   const store = new NoteStore(defaultStoragePaths());
   const session = new NoteSession(store, provider);
@@ -406,6 +409,19 @@ async function main(): Promise<void> {
     clearAutosave();
     rl.close();
     store.close();
+  }
+}
+
+function formatProviderEnvSource(result: ProviderEnvLoadResult): string {
+  switch (result.source) {
+    case "explicit-config":
+      return `LOGBOOK_CONFIG (${result.path})`;
+    case "user-config":
+      return `user config (${result.path})`;
+    case "shell":
+      return "shell";
+    case "unset":
+      return "unset";
   }
 }
 

@@ -22,6 +22,7 @@ export interface OpenAICompatibleConfig {
   baseUrl: string | undefined;
   apiKey: string | undefined;
   model: string | undefined;
+  source?: string | undefined;
 }
 
 export interface ConfiguredOpenAICompatibleConfig {
@@ -46,7 +47,8 @@ export function providerStatus(config: OpenAICompatibleConfig): string {
   const baseUrl = config.baseUrl ?? "(not set)";
   const model = config.model ?? "(not set)";
   const apiKey = config.apiKey ? "(set)" : "(not set)";
-  return `OpenAI-compatible provider\nbase URL: ${baseUrl}\nmodel: ${model}\nAPI key: ${apiKey}`;
+  const source = config.source ? `\nconfig source: ${config.source}` : "";
+  return `OpenAI-compatible provider\nbase URL: ${baseUrl}\nmodel: ${model}\nAPI key: ${apiKey}${source}`;
 }
 
 export function providerRequestMessage(status: number, details: string): string {
@@ -77,6 +79,7 @@ export function createOpenAIChatRequest(config: ConfiguredOpenAICompatibleConfig
   url: string;
   init: RequestInit;
 } {
+  const baseUrl = normalizeProviderBaseUrl(config.baseUrl);
   const body: Record<string, unknown> = {
     model: config.model,
     messages: request.messages,
@@ -92,7 +95,7 @@ export function createOpenAIChatRequest(config: ConfiguredOpenAICompatibleConfig
   }
 
   return {
-    url: `${config.baseUrl.replace(/\/$/, "")}/chat/completions`,
+    url: `${baseUrl}/chat/completions`,
     init: {
       method: "POST",
       headers: {
@@ -102,6 +105,29 @@ export function createOpenAIChatRequest(config: ConfiguredOpenAICompatibleConfig
       body: JSON.stringify(body)
     }
   };
+}
+
+function normalizeProviderBaseUrl(baseUrl: string): string {
+  let parsed: URL;
+  try {
+    parsed = new URL(baseUrl);
+  } catch {
+    throw new ProviderConfigError("LLM_BASE_URL must be a valid HTTP(S) URL.");
+  }
+
+  if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
+    throw new ProviderConfigError("LLM_BASE_URL must use http or https.");
+  }
+
+  if (parsed.protocol === "http:" && !isLoopbackHostname(parsed.hostname)) {
+    throw new ProviderConfigError("LLM_BASE_URL must use https unless it points to localhost, 127.0.0.1, or [::1].");
+  }
+
+  return parsed.href.replace(/\/$/, "");
+}
+
+function isLoopbackHostname(hostname: string): boolean {
+  return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1" || hostname === "[::1]";
 }
 
 export class OpenAICompatibleProvider implements LlmProvider {

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createOpenAIChatRequest, OpenAICompatibleProvider } from "../src/provider.js";
+import { createOpenAIChatRequest, OpenAICompatibleProvider, ProviderConfigError } from "../src/provider.js";
 
 test("constructs OpenAI-compatible chat request", () => {
   const request = createOpenAIChatRequest({
@@ -20,13 +20,75 @@ test("constructs OpenAI-compatible chat request", () => {
   assert.deepEqual(body.response_format, { type: "json_object" });
 });
 
+test("allows HTTPS provider URLs", () => {
+  const request = createOpenAIChatRequest({
+    baseUrl: "https://api.openai.com/v1/",
+    apiKey: "test-key",
+    model: "model"
+  }, {
+    messages: [{ role: "user", content: "hello" }]
+  });
+
+  assert.equal(request.url, "https://api.openai.com/v1/chat/completions");
+});
+
+test("allows loopback HTTP provider URLs", () => {
+  const localhosts = [
+    "http://localhost:11434/v1",
+    "http://127.0.0.1:11434/v1",
+    "http://[::1]:11434/v1"
+  ];
+
+  for (const baseUrl of localhosts) {
+    const request = createOpenAIChatRequest({
+      baseUrl,
+      apiKey: "test-key",
+      model: "model"
+    }, {
+      messages: [{ role: "user", content: "hello" }]
+    });
+
+    assert.match(request.url, /\/chat\/completions$/);
+  }
+});
+
+test("rejects remote HTTP provider URLs", () => {
+  assert.throws(() => createOpenAIChatRequest({
+    baseUrl: "http://api.openai.com/v1",
+    apiKey: "test-key",
+    model: "model"
+  }, {
+    messages: [{ role: "user", content: "hello" }]
+  }), ProviderConfigError);
+});
+
+test("rejects malformed base URLs before fetch is called", async () => {
+  let fetchCalled = false;
+  const fetchImpl: typeof fetch = async () => {
+    fetchCalled = true;
+    return new Response("{}", { status: 200 });
+  };
+
+  const provider = new OpenAICompatibleProvider({
+    baseUrl: "not a url",
+    apiKey: "key",
+    model: "model"
+  }, fetchImpl);
+
+  await assert.rejects(
+    provider.complete({ messages: [{ role: "user", content: "organize" }] }),
+    ProviderConfigError
+  );
+  assert.equal(fetchCalled, false);
+});
+
 test("provider returns assistant content from mocked fetch", async () => {
   const fetchImpl: typeof fetch = async () => new Response(JSON.stringify({
     choices: [{ message: { content: "organized note" } }]
   }), { status: 200 });
 
   const provider = new OpenAICompatibleProvider({
-    baseUrl: "http://example.test/v1",
+    baseUrl: "https://example.test/v1",
     apiKey: "key",
     model: "model"
   }, fetchImpl);
@@ -48,7 +110,7 @@ test("provider reports insufficient quota with a concise message", async () => {
   }), { status: 429 });
 
   const provider = new OpenAICompatibleProvider({
-    baseUrl: "http://example.test/v1",
+    baseUrl: "https://example.test/v1",
     apiKey: "key",
     model: "model"
   }, fetchImpl);
