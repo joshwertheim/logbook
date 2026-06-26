@@ -7,7 +7,7 @@ A CLI-first note-taking LLM harness. It captures raw notes, enriches them with l
 - Node.js 24+
 - pnpm
 
-## Setup
+## Development Setup
 
 ```sh
 pnpm install
