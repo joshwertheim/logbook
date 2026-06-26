@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
+import Database from "better-sqlite3";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 import { NoteSession } from "../src/session.js";
 import { NoteStore } from "../src/storage.js";
@@ -630,7 +630,7 @@ test("appendToExistingNote appends a dated update to the same note and preserves
     assert.match(markdown, /Added rollout owner\./);
     assert.equal(session.search("rollout").length, 1);
 
-    const db = new DatabaseSync(dbPath);
+    const db = new Database(dbPath);
     try {
       const row = db.prepare("SELECT COUNT(*) AS count FROM note_versions WHERE note_id = ?").get(saved.id) as { count: number };
       assert.equal(row.count, 2);
@@ -678,7 +678,7 @@ test("replaceExistingNote replaces raw capture, clears processed content, and pr
     const draft = store.getDraft(saved.id);
     assert.equal(draft?.processed, undefined);
 
-    const db = new DatabaseSync(dbPath);
+    const db = new Database(dbPath);
     try {
       const row = db.prepare("SELECT processed_content FROM notes WHERE id = ?").get(saved.id) as { processed_content: string | null };
       assert.equal(row.processed_content, null);

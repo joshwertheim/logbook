@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { DatabaseSync } from "node:sqlite";
+import Database from "better-sqlite3";
 import { matchDateCheck, type DateCheckQuery } from "./check.js";
 import { datedMarkdownFilename, renderMarkdown, slugify } from "./markdown.js";
 import { fallbackMetadata, fallbackTags, normalizeMetadata } from "./metadata.js";
@@ -60,12 +60,12 @@ export interface IndexResult {
 }
 
 export class NoteStore {
-  private readonly db: DatabaseSync;
+  private readonly db: Database.Database;
 
   constructor(private readonly paths: StoragePaths) {
     fs.mkdirSync(paths.notesDir, { recursive: true });
     fs.mkdirSync(path.dirname(paths.dbPath), { recursive: true });
-    this.db = new DatabaseSync(paths.dbPath);
+    this.db = new Database(paths.dbPath);
     this.migrate();
   }
 

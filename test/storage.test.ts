@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
+import Database from "better-sqlite3";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 import { NoteStore } from "../src/storage.js";
 
@@ -35,7 +35,7 @@ test("saves notes to markdown and sqlite, then searches them", () => {
     assert.deepEqual(results[0]?.topics, ["Launch planning"]);
     assert.deepEqual(results[0]?.entities, [{ name: "Friday launch", type: "event" }]);
 
-    const db = new DatabaseSync(path.join(dir, ".logbook", "logbook.sqlite"));
+    const db = new Database(path.join(dir, ".logbook", "logbook.sqlite"));
     try {
       const row = db.prepare("SELECT metadata_json FROM notes WHERE id = ?").get(saved.id) as { metadata_json: string };
       const metadata = JSON.parse(row.metadata_json) as { topics?: unknown; entities?: unknown };
@@ -139,7 +139,7 @@ test("updates saved notes in place and records a new version", () => {
     assert.deepEqual(newResults[0]?.tags, ["budget"]);
     assert.deepEqual(newResults[0]?.topics, ["Budgeting"]);
 
-    const db = new DatabaseSync(dbPath);
+    const db = new Database(dbPath);
     try {
       const row = db.prepare("SELECT COUNT(*) AS count FROM note_versions WHERE note_id = ?").get(saved.id) as { count: number };
       assert.equal(row.count, 2);
@@ -402,7 +402,7 @@ test("backfills canonical metadata for existing database rows", () => {
   fs.mkdirSync(path.dirname(dbPath), { recursive: true });
   fs.mkdirSync(notesDir, { recursive: true });
 
-  const db = new DatabaseSync(dbPath);
+  const db = new Database(dbPath);
   try {
     db.exec(`
       CREATE TABLE notes (
@@ -450,7 +450,7 @@ test("backfills canonical metadata for existing database rows", () => {
 
   const store = new NoteStore({ notesDir, dbPath });
   try {
-    const row = new DatabaseSync(dbPath);
+    const row = new Database(dbPath);
     try {
       const result = row.prepare("SELECT metadata_json FROM notes WHERE id = 1").get() as { metadata_json: string };
       const metadata = JSON.parse(result.metadata_json) as { tags: string[]; topics: unknown[]; entities: unknown[] };
