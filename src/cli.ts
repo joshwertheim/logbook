@@ -12,7 +12,7 @@ import { loadProviderEnv, type ProviderEnvLoadResult } from "./env.js";
 import { OpenAICompatibleProvider, providerConfigFromEnv, providerStatus, ProviderConfigError } from "./provider.js";
 import { NoteSession } from "./session.js";
 import { defaultStoragePaths, NoteStore } from "./storage.js";
-import type { ContextAnalysisResult, DecisionAnalysisResult, GapAnalysisResult, NoteResolutionCandidate, RelatedResult, SearchResult } from "./types.js";
+import type { ContextAnalysisResult, DecisionAnalysisResult, GapAnalysisResult, NoteResolutionCandidate, NoteResolutionResult, RelatedResult, SearchResult } from "./types.js";
 
 const autosaveDelayMs = 2000;
 const terminalLogo = [
@@ -51,6 +51,9 @@ type PendingWrite =
   | { kind: "edit"; target: NoteResolutionCandidate; raw: string };
 
 type SelectableNoteResult = SearchResult | RelatedResult;
+type ResolvedCommandTarget =
+  | { kind: "selected"; target: NoteResolutionCandidate }
+  | { kind: "ambiguous"; resolution: NoteResolutionResult };
 
 async function main(): Promise<void> {
   const configLoad = loadProviderEnv();
@@ -232,16 +235,17 @@ async function main(): Promise<void> {
               output.write("Usage: /amend <query>\n");
               break;
             }
-            const resolution = await session.resolveNote(parsed.args);
-            if (!resolution.selected) {
+            const resolved = await resolveCommandTarget(session, parsed.args, lastNoteResults);
+            if (resolved.kind === "ambiguous") {
+              const { resolution } = resolved;
               output.write(formatAmbiguousResolution(resolution.candidates));
               if (resolution.llmSkippedReason) {
                 output.write(`${resolution.llmSkippedReason}\n`);
               }
               break;
             }
-            composeBuffer = { kind: "amend", lines: [], target: resolution.selected };
-            output.write(formatResolvedTarget("Amending", resolution.selected));
+            composeBuffer = { kind: "amend", lines: [], target: resolved.target };
+            output.write(formatResolvedTarget("Amending", resolved.target));
             output.write("Amend mode. Finish with /done or discard with /cancel.\n");
             break;
           }
@@ -250,20 +254,21 @@ async function main(): Promise<void> {
               output.write("Usage: /edit <query>\n");
               break;
             }
-            const resolution = await session.resolveNote(parsed.args);
-            if (!resolution.selected) {
+            const resolved = await resolveCommandTarget(session, parsed.args, lastNoteResults);
+            if (resolved.kind === "ambiguous") {
+              const { resolution } = resolved;
               output.write(formatAmbiguousResolution(resolution.candidates));
               if (resolution.llmSkippedReason) {
                 output.write(`${resolution.llmSkippedReason}\n`);
               }
               break;
             }
-            const draft = session.getDraft(resolution.selected.id);
+            const draft = session.getDraft(resolved.target.id);
             if (!draft) {
-              output.write(`Cannot load note ${resolution.selected.id}.\n`);
+              output.write(`Cannot load note ${resolved.target.id}.\n`);
               break;
             }
-            output.write(formatResolvedTarget("Editing", resolution.selected));
+            output.write(formatResolvedTarget("Editing", resolved.target));
             if (!isTerminal) {
               output.write("/edit requires an interactive terminal editor.\n");
               break;
@@ -276,7 +281,7 @@ async function main(): Promise<void> {
             } finally {
               rl.resume();
             }
-            pendingWrite = { kind: "edit", target: resolution.selected, raw: edited };
+            pendingWrite = { kind: "edit", target: resolved.target, raw: edited };
             output.write(formatPendingWrite(pendingWrite));
             break;
           }
@@ -504,6 +509,39 @@ function formatNoteSelection(result: SelectableNoteResult, field: "all" | "snipp
 
 function isRelatedResult(result: SelectableNoteResult): result is RelatedResult {
   return "reasons" in result;
+}
+
+async function resolveCommandTarget(session: NoteSession, query: string, lastNoteResults: SelectableNoteResult[]): Promise<ResolvedCommandTarget> {
+  const displayIndex = parseDisplayIndex(query);
+  if (displayIndex !== undefined) {
+    const selected = lastNoteResults[displayIndex - 1];
+    if (selected) {
+      return { kind: "selected", target: noteResultToResolutionCandidate(selected) };
+    }
+  }
+
+  const resolution = await session.resolveNote(query);
+  return resolution.selected
+    ? { kind: "selected", target: resolution.selected }
+    : { kind: "ambiguous", resolution };
+}
+
+function parseDisplayIndex(query: string): number | undefined {
+  const trimmed = query.trim();
+  if (!/^[1-9]\d*$/.test(trimmed)) {
+    return undefined;
+  }
+
+  return Number(trimmed);
+}
+
+function noteResultToResolutionCandidate(result: SelectableNoteResult): NoteResolutionCandidate {
+  return {
+    ...result,
+    score: isRelatedResult(result) ? result.score : 0,
+    reasons: isRelatedResult(result) ? result.reasons : ["selected from displayed results"],
+    exact: true
+  };
 }
 
 function formatResolvedTarget(action: string, target: NoteResolutionCandidate): string {
