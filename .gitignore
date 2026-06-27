@@ -8,3 +8,4 @@ notes/
 *.sqlite-shm
 *.sqlite-wal
 .DS_Store
+github.tape
