@@ -2,7 +2,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { clearLine, cursorTo } from "node:readline";
+import { clearLine, clearScreenDown, cursorTo } from "node:readline";
 import { createInterface } from "node:readline/promises";
 import { argv, stdin as input, stdout as output } from "node:process";
 import { spawn } from "node:child_process";
@@ -15,6 +15,32 @@ import { defaultStoragePaths, NoteStore } from "./storage.js";
 import type { ContextAnalysisResult, DecisionAnalysisResult, GapAnalysisResult, NoteResolutionCandidate, RelatedResult } from "./types.js";
 
 const autosaveDelayMs = 2000;
+const terminalLogo = [
+  " _                _                 _",
+  "| |    ___   __ _| |__   ___   ___ | | __",
+  "| |   / _ \\ / _` | '_ \\ / _ \\ / _ \\| |/ /",
+  "| |__| (_) | (_| | |_) | (_) | (_) |   <",
+  "|_____\\___/ \\__, |_.__/ \\___/ \\___/|_|\\_\\",
+  "            |___/"
+];
+const terminalSplashTagline = "Logbook note session.";
+const terminalFallbackTagline = "Logbook note session. Type /help for commands.";
+const terminalCommandBox = [
+  "+-- Commands ---------------------+",
+  "| /help              command list |",
+  "| /compose           edit draft   |",
+  "| /related <words>   search notes |",
+  "| /save              save note    |",
+  "| /quit              exit         |",
+  "+---------------------------------+"
+];
+const ansi = {
+  reset: "\u001b[0m",
+  bold: "\u001b[1m",
+  cyan: "\u001b[36m",
+  dim: "\u001b[2m",
+  coral: "\u001b[38;5;203m"
+} as const;
 
 type ComposeBuffer =
   | { kind: "multiline"; lines: string[] }
@@ -91,7 +117,7 @@ async function main(): Promise<void> {
     autosaveTimer = setTimeout(runAutosave, autosaveDelayMs);
   };
 
-  output.write("Logbook note session. Type /help for commands.\n");
+  renderStartup(isTerminal);
 
   try {
     await new Promise<void>((resolve) => setImmediate(resolve));
@@ -535,6 +561,65 @@ async function editRawCapture(raw: string): Promise<string> {
 function editorCommand(): string[] {
   const configured = process.env.VISUAL || process.env.EDITOR || "vi";
   return configured.match(/"[^"]+"|'[^']+'|\S+/g)?.map((token) => token.replace(/^(['"])(.*)\1$/, "$2")) ?? ["vi"];
+}
+
+function startupMessage(isTerminal: boolean): string {
+  return isTerminal
+    ? `${formatTerminalSplash(output.columns, shouldColorStartup())}\n`
+    : `${terminalFallbackTagline}\n`;
+}
+
+function renderStartup(isTerminal: boolean): void {
+  if (isTerminal) {
+    cursorTo(output, 0, 0);
+    clearScreenDown(output);
+  }
+
+  output.write(startupMessage(isTerminal));
+}
+
+function formatTerminalSplash(columns = 80, color = false): string {
+  const logoWidth = Math.max(...terminalLogo.map((line) => line.length));
+  const boxWidth = Math.max(...terminalCommandBox.map((line) => line.length));
+  const gap = "  ";
+  const canRenderBox = columns >= logoWidth + gap.length + boxWidth;
+
+  if (!canRenderBox) {
+    return [
+      ...terminalLogo.map((line) => colorize(line, ansi.cyan, color)),
+      "",
+      colorize(terminalFallbackTagline, ansi.bold, color)
+    ].join("\n");
+  }
+
+  const lineCount = Math.max(terminalLogo.length, terminalCommandBox.length);
+  const lines = Array.from({ length: lineCount }, (_, index) => {
+    const logoLine = terminalLogo[index] ?? "";
+    const boxLine = terminalCommandBox[index] ?? "";
+    return `${colorize(logoLine.padEnd(logoWidth), ansi.cyan, color)}${gap}${formatCommandBoxLine(boxLine, color)}`;
+  });
+
+  return [...lines, "", colorize(terminalSplashTagline, ansi.bold, color)].join("\n");
+}
+
+function shouldColorStartup(): boolean {
+  return !process.env.NO_COLOR && process.env.TERM !== "dumb";
+}
+
+function colorize(text: string, colorCode: string, enabled: boolean): string {
+  return enabled ? `${colorCode}${text}${ansi.reset}` : text;
+}
+
+function formatCommandBoxLine(line: string, color: boolean): string {
+  const commandMatch = line.match(/(\/(?:help|compose|related|save|quit)(?: <words>)?)/);
+  const baseLine = colorize(line, ansi.dim, color);
+
+  if (!commandMatch?.[1]) {
+    return baseLine;
+  }
+
+  const command = commandMatch[1];
+  return baseLine.replace(command, colorize(command, `${ansi.bold}${ansi.coral}`, color));
 }
 
 async function runEditor(command: string | undefined, args: string[]): Promise<void> {
