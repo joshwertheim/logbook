@@ -12,7 +12,7 @@ import { loadProviderEnv, type ProviderEnvLoadResult } from "./env.js";
 import { OpenAICompatibleProvider, providerConfigFromEnv, providerStatus, ProviderConfigError } from "./provider.js";
 import { NoteSession } from "./session.js";
 import { defaultStoragePaths, NoteStore } from "./storage.js";
-import type { ContextAnalysisResult, DecisionAnalysisResult, GapAnalysisResult, NoteResolutionCandidate, RelatedResult } from "./types.js";
+import type { ContextAnalysisResult, DecisionAnalysisResult, GapAnalysisResult, NoteResolutionCandidate, RelatedResult, SearchResult } from "./types.js";
 
 const autosaveDelayMs = 2000;
 const terminalLogo = [
@@ -50,6 +50,8 @@ type PendingWrite =
   | { kind: "amend"; target: NoteResolutionCandidate; text: string; now: Date }
   | { kind: "edit"; target: NoteResolutionCandidate; raw: string };
 
+type SelectableNoteResult = SearchResult | RelatedResult;
+
 async function main(): Promise<void> {
   const configLoad = loadProviderEnv();
 
@@ -75,7 +77,7 @@ async function main(): Promise<void> {
   let composeBuffer: ComposeBuffer | undefined;
   let pendingWrite: PendingWrite | undefined;
   let autosaveTimer: ReturnType<typeof setTimeout> | undefined;
-  let lastRelatedResults: RelatedResult[] = [];
+  let lastNoteResults: SelectableNoteResult[] = [];
 
   const writePrompt = (): void => {
     if (isTerminal) {
@@ -326,11 +328,13 @@ async function main(): Promise<void> {
             }
             const results = session.search(parsed.args.trim());
             if (results.length === 0) {
+              lastNoteResults = [];
               output.write("No matching notes.\n");
               break;
             }
-            for (const result of results) {
-              output.write(`[${result.id}] ${result.title} (${result.tags.join(", ")})\n${result.snippet}\n${result.markdownPath}\n`);
+            lastNoteResults = results;
+            for (const [index, result] of results.entries()) {
+              output.write(`${index + 1}. ${result.title} (${result.tags.join(", ")})\n${result.snippet}\n${result.markdownPath}\n`);
             }
             break;
           }
@@ -338,11 +342,11 @@ async function main(): Promise<void> {
             const relatedArgs = parseRelatedArgs(parsed.args);
             const lookup = await session.related({ query: relatedArgs.query });
             if (lookup.results.length === 0) {
-              lastRelatedResults = [];
+              lastNoteResults = [];
               output.write("No additional related notes found.\n");
               break;
             }
-            lastRelatedResults = lookup.results;
+            lastNoteResults = lookup.results;
             output.write(formatRelatedResults(lookup.results));
             if (lookup.llmSkippedReason) {
               output.write(`${lookup.llmSkippedReason}\n`);
@@ -356,7 +360,7 @@ async function main(): Promise<void> {
               break;
             }
             const analysis = await session.context(analysisArgs);
-            lastRelatedResults = analysis.relatedNotes;
+            lastNoteResults = analysis.relatedNotes;
             output.write(formatContextAnalysis(analysis));
             break;
           }
@@ -386,12 +390,12 @@ async function main(): Promise<void> {
               output.write("Usage: /note <number> [all|snippet|path|id|reason]\n");
               break;
             }
-            const result = lastRelatedResults[selection.index - 1];
+            const result = lastNoteResults[selection.index - 1];
             if (!result) {
-              output.write("No related result at that number. Run /related or /context first, then choose a listed number.\n");
+              output.write("No note result at that number. Run /search, /related, or /context first, then choose a listed number.\n");
               break;
             }
-            output.write(formatRelatedSelection(result, selection.field));
+            output.write(formatNoteSelection(result, selection.field));
             break;
           }
           case "check": {
@@ -478,7 +482,7 @@ function formatRelatedResults(results: RelatedResult[]): string {
   }).join("\n")}\n`;
 }
 
-function formatRelatedSelection(result: RelatedResult, field: "all" | "snippet" | "path" | "id" | "reason"): string {
+function formatNoteSelection(result: SelectableNoteResult, field: "all" | "snippet" | "path" | "id" | "reason"): string {
   switch (field) {
     case "snippet":
       return `${result.snippet}\n`;
@@ -487,16 +491,19 @@ function formatRelatedSelection(result: RelatedResult, field: "all" | "snippet" 
     case "id":
       return `${result.id}\n`;
     case "reason":
-      return `${result.reasons.join("; ")}\n`;
+      return `${isRelatedResult(result) ? result.reasons.join("; ") : "No related-reason data for this search result."}\n`;
     case "all":
       return [
-        result.title,
-        result.reasons.join("; "),
-        result.snippet,
+        isRelatedResult(result) ? result.reasons.join("; ") : result.content,
+        ...(isRelatedResult(result) ? [result.snippet] : []),
         result.markdownPath,
         `ID: ${result.id}`
       ].join("\n") + "\n";
   }
+}
+
+function isRelatedResult(result: SelectableNoteResult): result is RelatedResult {
+  return "reasons" in result;
 }
 
 function formatResolvedTarget(action: string, target: NoteResolutionCandidate): string {

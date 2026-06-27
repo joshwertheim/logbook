@@ -120,7 +120,7 @@ export function helpText(): string {
     "/context [--with-content] <query> - create a concise snapshot from related saved notes",
     "/decisions [--with-content] <query> - synthesize decisions and rationale from related notes",
     "/gaps [--with-content] <query> - find unexplained terms and entities in related notes",
-    "/note <number> [all|snippet|path|id|reason] - show details for a numbered /related or /context result",
+    "/note <number> [all|snippet|path|id|reason] - show details for a numbered /search, /related, or /context result",
     "/check <question> - check saved notes by natural date phrases, such as what happened today",
     "/index - index Markdown notes into SQLite",
     "/provider - show active model/provider config",
