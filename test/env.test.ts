@@ -20,23 +20,24 @@ test("parses dotenv values", () => {
 });
 
 test("loads provider values from user config without overriding shell values", () => {
-  const configHome = fs.mkdtempSync(path.join(os.tmpdir(), "logbook-env-"));
-  const configDir = path.join(configHome, "logbook");
+  const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), "logbook-env-"));
+  const configDir = path.join(homeDir, ".logbook");
   fs.mkdirSync(configDir, { recursive: true });
-  fs.writeFileSync(path.join(configDir, "config.env"), [
+  const configPath = path.join(configDir, "config.env");
+  fs.writeFileSync(configPath, [
     "LLM_BASE_URL=http://localhost:11434/v1",
     "LLM_API_KEY=file-key",
     "LLM_MODEL=file-model"
   ].join("\n"));
 
   const env: NodeJS.ProcessEnv = {
-    XDG_CONFIG_HOME: configHome,
     LLM_API_KEY: "shell-key"
   };
 
-  const result = loadProviderEnv({ env });
+  const result = loadProviderEnv({ env, homeDir });
 
   assert.equal(result.source, "user-config");
+  assert.equal(result.path, configPath);
   assert.equal(env.LLM_BASE_URL, "http://localhost:11434/v1");
   assert.equal(env.LLM_API_KEY, "shell-key");
   assert.equal(env.LLM_MODEL, "file-model");
@@ -44,21 +45,19 @@ test("loads provider values from user config without overriding shell values", (
 
 test("does not load cwd .env by default", () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "logbook-env-cwd-"));
-  const configHome = fs.mkdtempSync(path.join(os.tmpdir(), "logbook-env-empty-"));
+  const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), "logbook-env-empty-"));
   fs.writeFileSync(path.join(dir, ".env"), [
     "LLM_BASE_URL=http://localhost:11434/v1",
     "LLM_API_KEY=file-key",
     "LLM_MODEL=file-model"
   ].join("\n"));
 
-  const env: NodeJS.ProcessEnv = {
-    XDG_CONFIG_HOME: configHome
-  };
+  const env: NodeJS.ProcessEnv = {};
 
   const previousCwd = process.cwd();
   try {
     process.chdir(dir);
-    const result = loadProviderEnv({ env });
+    const result = loadProviderEnv({ env, homeDir });
     assert.equal(result.source, "unset");
     assert.equal(env.LLM_BASE_URL, undefined);
     assert.equal(env.LLM_API_KEY, undefined);
@@ -88,4 +87,14 @@ test("supports explicit LOGBOOK_CONFIG", () => {
   assert.equal(env.LLM_BASE_URL, "https://api.openai.com/v1");
   assert.equal(env.LLM_API_KEY, "file-key");
   assert.equal(env.LLM_MODEL, "file-model");
+});
+
+test("creates default logbook home for user config", () => {
+  const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), "logbook-env-home-"));
+  const env: NodeJS.ProcessEnv = {};
+
+  const result = loadProviderEnv({ env, homeDir });
+
+  assert.equal(result.source, "unset");
+  assert.equal(fs.existsSync(path.join(homeDir, ".logbook")), true);
 });

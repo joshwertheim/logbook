@@ -4,7 +4,16 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { NoteStore } from "../src/storage.js";
+import { defaultStoragePaths, NoteStore } from "../src/storage.js";
+
+test("default storage paths live under the user's logbook home", () => {
+  const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), "logbook-home-"));
+
+  assert.deepEqual(defaultStoragePaths(homeDir), {
+    notesDir: path.join(homeDir, ".logbook", "notes"),
+    dbPath: path.join(homeDir, ".logbook", "logbook.sqlite")
+  });
+});
 
 test("saves notes to markdown and sqlite, then searches them", () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "logbook-test-"));

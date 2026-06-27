@@ -54,8 +54,8 @@ export LLM_MODEL="gpt-4.1-mini"
 You can also put those values in a user-level config file:
 
 ```sh
-mkdir -p "${XDG_CONFIG_HOME:-$HOME/.config}/logbook"
-$EDITOR "${XDG_CONFIG_HOME:-$HOME/.config}/logbook/config.env"
+mkdir -p "$HOME/.logbook"
+$EDITOR "$HOME/.logbook/config.env"
 ```
 
 ```env
@@ -64,13 +64,13 @@ LLM_API_KEY=...
 LLM_MODEL=gpt-4.1-mini
 ```
 
-Environment variables already set in your shell take precedence over config file values. By default, Logbook reads `$XDG_CONFIG_HOME/logbook/config.env`, falling back to `~/.config/logbook/config.env`. To use an explicit config file, set `LOGBOOK_CONFIG` to an absolute path:
+Environment variables already set in your shell take precedence over config file values. By default, Logbook reads `~/.logbook/config.env` and creates `~/.logbook` on startup if needed. To use an explicit config file, set `LOGBOOK_CONFIG` to an absolute path:
 
 ```sh
 LOGBOOK_CONFIG=/absolute/path/to/config.env logbook
 ```
 
-Logbook does not auto-load `./.env` from the directory where it is run. If you previously used a root-level `.env`, move those provider values to the user config file or launch Logbook with `LOGBOOK_CONFIG=/absolute/path/to/config.env`.
+Logbook does not auto-load `./.env` from the directory where it is run. If you previously used a root-level `.env`, move those provider values to `~/.logbook/config.env` or launch Logbook with `LOGBOOK_CONFIG=/absolute/path/to/config.env`.
 
 Provider URLs must use HTTPS unless they point to a loopback HTTP server: `http://localhost`, `http://127.0.0.1`, or `http://[::1]`. Local OpenAI-compatible servers can work if they expose `/chat/completions`.
 
@@ -158,7 +158,7 @@ Press Tab while typing a slash command to autocomplete matching commands, such a
 
 ## Storage and Indexing
 
-Markdown notes are written to `notes/YYYY-MM-DD-slug.md`. SQLite data is stored in `.logbook/logbook.sqlite`.
+Markdown notes are written to `~/.logbook/notes/YYYY-MM-DD-slug.md`. SQLite data is stored in `~/.logbook/logbook.sqlite`.
 
 SQLite is the CLI's operational source of truth. Markdown files are readable mirrors written on save; manual Markdown edits are not reflected in CLI search, check, or related-note results until you run `/index` or `logbook index`.
 

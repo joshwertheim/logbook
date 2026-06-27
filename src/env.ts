@@ -1,6 +1,6 @@
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
+import { defaultConfigPath, logbookHomeDir } from "./paths.js";
 
 const providerKeys = ["LLM_BASE_URL", "LLM_API_KEY", "LLM_MODEL"] as const;
 
@@ -19,9 +19,13 @@ export interface ProviderEnvLoadResult {
 export function loadProviderEnv(options: ProviderEnvLoadOptions = {}): ProviderEnvLoadResult {
   const env = options.env ?? process.env;
   const explicitConfig = env.LOGBOOK_CONFIG;
-  const userConfigPath = path.join(env.XDG_CONFIG_HOME ?? path.join(options.homeDir ?? os.homedir(), ".config"), "logbook", "config.env");
+  const userConfigPath = defaultConfigPath(options.homeDir);
   const configPath = explicitConfig && path.isAbsolute(explicitConfig) ? explicitConfig : userConfigPath;
   const configSource: ProviderEnvSource = explicitConfig && path.isAbsolute(explicitConfig) ? "explicit-config" : "user-config";
+
+  if (configPath === userConfigPath) {
+    fs.mkdirSync(logbookHomeDir(options.homeDir), { recursive: true });
+  }
 
   if (fs.existsSync(configPath)) {
     loadEnvFile(configPath, env);
