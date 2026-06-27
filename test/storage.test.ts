@@ -9,10 +9,36 @@ import { defaultStoragePaths, NoteStore } from "../src/storage.js";
 test("default storage paths live under the user's logbook home", () => {
   const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), "logbook-home-"));
 
-  assert.deepEqual(defaultStoragePaths(homeDir), {
+  assert.deepEqual(defaultStoragePaths({ homeDir }), {
     notesDir: path.join(homeDir, ".logbook", "notes"),
     dbPath: path.join(homeDir, ".logbook", "logbook.sqlite")
   });
+});
+
+test("default storage paths support a configured notes directory", () => {
+  const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), "logbook-home-"));
+  const notesDir = path.join(homeDir, "custom-notes");
+
+  assert.deepEqual(defaultStoragePaths({ homeDir, env: { LOGBOOK_NOTES_DIR: notesDir } }), {
+    notesDir,
+    dbPath: path.join(homeDir, ".logbook", "logbook.sqlite")
+  });
+});
+
+test("configured notes directory supports home-relative paths", () => {
+  const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), "logbook-home-"));
+
+  assert.deepEqual(defaultStoragePaths({ homeDir, env: { LOGBOOK_NOTES_DIR: "~/Documents/logbook" } }), {
+    notesDir: path.join(homeDir, "Documents", "logbook"),
+    dbPath: path.join(homeDir, ".logbook", "logbook.sqlite")
+  });
+});
+
+test("configured notes directory rejects relative paths", () => {
+  assert.throws(
+    () => defaultStoragePaths({ env: { LOGBOOK_NOTES_DIR: "notes" } }),
+    /LOGBOOK_NOTES_DIR must be an absolute path/
+  );
 });
 
 test("saves notes to markdown and sqlite, then searches them", () => {

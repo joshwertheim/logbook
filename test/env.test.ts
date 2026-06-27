@@ -43,6 +43,40 @@ test("loads provider values from user config without overriding shell values", (
   assert.equal(env.LLM_MODEL, "file-model");
 });
 
+test("loads notes directory from user config without overriding shell values", () => {
+  const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), "logbook-env-notes-"));
+  const configDir = path.join(homeDir, ".logbook");
+  fs.mkdirSync(configDir, { recursive: true });
+  fs.writeFileSync(path.join(configDir, "config.env"), [
+    "LOGBOOK_NOTES_DIR=/tmp/logbook-notes-from-file"
+  ].join("\n"));
+
+  const env: NodeJS.ProcessEnv = {
+    LOGBOOK_NOTES_DIR: "/tmp/logbook-notes-from-shell"
+  };
+
+  const result = loadProviderEnv({ env, homeDir });
+
+  assert.equal(result.source, "user-config");
+  assert.equal(env.LOGBOOK_NOTES_DIR, "/tmp/logbook-notes-from-shell");
+});
+
+test("loads notes directory from user config", () => {
+  const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), "logbook-env-notes-"));
+  const configDir = path.join(homeDir, ".logbook");
+  fs.mkdirSync(configDir, { recursive: true });
+  fs.writeFileSync(path.join(configDir, "config.env"), [
+    "LOGBOOK_NOTES_DIR=/tmp/logbook-notes-from-file"
+  ].join("\n"));
+
+  const env: NodeJS.ProcessEnv = {};
+
+  const result = loadProviderEnv({ env, homeDir });
+
+  assert.equal(result.source, "user-config");
+  assert.equal(env.LOGBOOK_NOTES_DIR, "/tmp/logbook-notes-from-file");
+});
+
 test("does not load cwd .env by default", () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "logbook-env-cwd-"));
   const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), "logbook-env-empty-"));

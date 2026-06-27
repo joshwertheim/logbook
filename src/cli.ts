@@ -51,6 +51,8 @@ type PendingWrite =
   | { kind: "edit"; target: NoteResolutionCandidate; raw: string };
 
 async function main(): Promise<void> {
+  const configLoad = loadProviderEnv();
+
   if (argv[2] === "index") {
     const store = new NoteStore(defaultStoragePaths());
     try {
@@ -61,7 +63,6 @@ async function main(): Promise<void> {
     return;
   }
 
-  const configLoad = loadProviderEnv();
   const config = {
     ...providerConfigFromEnv(),
     source: formatProviderEnvSource(configLoad)

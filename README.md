@@ -62,6 +62,7 @@ $EDITOR "$HOME/.logbook/config.env"
 LLM_BASE_URL=https://api.openai.com/v1
 LLM_API_KEY=...
 LLM_MODEL=gpt-4.1-mini
+LOGBOOK_NOTES_DIR=~/Documents/logbook-notes
 ```
 
 Environment variables already set in your shell take precedence over config file values. By default, Logbook reads `~/.logbook/config.env` and creates `~/.logbook` on startup if needed. To use an explicit config file, set `LOGBOOK_CONFIG` to an absolute path:
@@ -158,7 +159,7 @@ Press Tab while typing a slash command to autocomplete matching commands, such a
 
 ## Storage and Indexing
 
-Markdown notes are written to `~/.logbook/notes/YYYY-MM-DD-slug.md`. SQLite data is stored in `~/.logbook/logbook.sqlite`.
+Markdown notes are written to `~/.logbook/notes/YYYY-MM-DD-slug.md` by default. Set `LOGBOOK_NOTES_DIR` in the shell or `~/.logbook/config.env` to use a different notes directory; it must be an absolute path or start with `~/`. SQLite data is stored in `~/.logbook/logbook.sqlite`.
 
 SQLite is the CLI's operational source of truth. Markdown files are readable mirrors written on save; manual Markdown edits are not reflected in CLI search, check, or related-note results until you run `/index` or `logbook index`.
 

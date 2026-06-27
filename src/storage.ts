@@ -4,12 +4,17 @@ import Database from "better-sqlite3";
 import { matchDateCheck, type DateCheckQuery } from "./check.js";
 import { datedMarkdownFilename, renderMarkdown, slugify } from "./markdown.js";
 import { fallbackMetadata, fallbackTags, normalizeMetadata } from "./metadata.js";
-import { logbookHomeDir } from "./paths.js";
+import { configuredNotesDir, logbookHomeDir } from "./paths.js";
 import type { CheckResult, NoteDraft, NoteEntity, NoteMetadata, NoteResolutionCandidate, RelatedResult, RelatedStrength, SavedNote, SearchResult } from "./types.js";
 
 export interface StoragePaths {
   notesDir: string;
   dbPath: string;
+}
+
+export interface DefaultStoragePathOptions {
+  env?: NodeJS.ProcessEnv;
+  homeDir?: string;
 }
 
 interface NoteRow {
@@ -602,10 +607,10 @@ export class NoteStore {
   }
 }
 
-export function defaultStoragePaths(homeDir?: string): StoragePaths {
-  const baseDir = logbookHomeDir(homeDir);
+export function defaultStoragePaths(options: DefaultStoragePathOptions = {}): StoragePaths {
+  const baseDir = logbookHomeDir(options.homeDir);
   return {
-    notesDir: path.join(baseDir, "notes"),
+    notesDir: configuredNotesDir(options.env, options.homeDir),
     dbPath: path.join(baseDir, "logbook.sqlite")
   };
 }
