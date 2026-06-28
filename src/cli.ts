@@ -12,7 +12,8 @@ import { loadProviderEnv, type ProviderEnvLoadResult } from "./env.js";
 import { OpenAICompatibleProvider, providerConfigFromEnv, providerStatus, ProviderConfigError } from "./provider.js";
 import { NoteSession } from "./session.js";
 import { defaultStoragePaths, NoteStore } from "./storage.js";
-import type { ContextAnalysisResult, DecisionAnalysisResult, GapAnalysisResult, NoteResolutionCandidate, NoteResolutionResult, RelatedResult, SearchResult } from "./types.js";
+import { wrapTerminalOutput, wrapText } from "./terminalText.js";
+import type { CheckResult, ContextAnalysisResult, DecisionAnalysisResult, GapAnalysisResult, NoteResolutionCandidate, NoteResolutionResult, RelatedResult, SearchResult } from "./types.js";
 
 const autosaveDelayMs = 2000;
 const terminalLogo = [
@@ -367,9 +368,7 @@ async function main(): Promise<void> {
               break;
             }
             lastNoteResults = results;
-            for (const [index, result] of results.entries()) {
-              output.write(`${index + 1}. ${result.title} (${result.tags.join(", ")})\n${result.snippet}\n${result.markdownPath}\n`);
-            }
+            output.write(formatSearchResults(results, terminalColumns()));
             break;
           }
           case "related": {
@@ -381,7 +380,7 @@ async function main(): Promise<void> {
               break;
             }
             lastNoteResults = lookup.results;
-            output.write(formatRelatedResults(lookup.results));
+            output.write(formatRelatedResults(lookup.results, terminalColumns()));
             if (lookup.llmSkippedReason) {
               output.write(`${lookup.llmSkippedReason}\n`);
             }
@@ -395,7 +394,7 @@ async function main(): Promise<void> {
             }
             const analysis = await session.context(analysisArgs);
             lastNoteResults = analysis.relatedNotes;
-            output.write(formatContextAnalysis(analysis));
+            output.write(formatContextAnalysis(analysis, terminalColumns()));
             break;
           }
           case "decisions": {
@@ -405,7 +404,7 @@ async function main(): Promise<void> {
               break;
             }
             const analysis = await session.decisions(analysisArgs);
-            output.write(formatDecisionAnalysis(analysis));
+            output.write(formatDecisionAnalysis(analysis, terminalColumns()));
             break;
           }
           case "gaps": {
@@ -415,7 +414,7 @@ async function main(): Promise<void> {
               break;
             }
             const analysis = await session.gaps(analysisArgs);
-            output.write(formatGapAnalysis(analysis));
+            output.write(formatGapAnalysis(analysis, terminalColumns()));
             break;
           }
           case "note": {
@@ -429,7 +428,7 @@ async function main(): Promise<void> {
               output.write("No note result at that number. Run /search, /related, or /context first, then choose a listed number.\n");
               break;
             }
-            output.write(formatNoteSelection(result, selection.field));
+            output.write(formatNoteSelection(result, selection.field, terminalColumns()));
             break;
           }
           case "check": {
@@ -445,7 +444,7 @@ async function main(): Promise<void> {
             }
             output.write(`Saved notes matching ${query.label} (${query.targetDate}):\n`);
             for (const result of results) {
-              output.write(`[${result.id}] ${result.title} - ${result.reasons.join(", ")}\n${result.snippet}\n${result.markdownPath}\n`);
+              output.write(formatCheckResult(result, terminalColumns()));
             }
             break;
           }
@@ -510,29 +509,64 @@ function formatIndexResult(result: ReturnType<NoteStore["indexMarkdownNotes"]>):
   return `${lines.join("\n")}\n`;
 }
 
-function formatRelatedResults(results: RelatedResult[]): string {
+function formatSearchResults(results: SearchResult[], columns = 80): string {
+  return results.map((result, index) => {
+    const title = wrapText(`${index + 1}. ${result.title} (${result.tags.join(", ")})`, {
+      width: columns,
+      subsequentIndent: "   "
+    });
+    return [
+      title,
+      wrapText(result.snippet, { width: columns }),
+      wrapText(result.markdownPath, { width: columns })
+    ].join("\n");
+  }).join("\n") + "\n";
+}
+
+function formatCheckResult(result: CheckResult, columns = 80): string {
+  return [
+    wrapText(`[${result.id}] ${result.title} - ${result.reasons.join(", ")}`, {
+      width: columns,
+      subsequentIndent: "   "
+    }),
+    wrapText(result.snippet, { width: columns }),
+    wrapText(result.markdownPath, { width: columns })
+  ].join("\n") + "\n";
+}
+
+function formatRelatedResults(results: RelatedResult[], columns = 80): string {
   return `${results.map((result, index) => {
-    return `${index + 1}. ${result.title}\n   ${result.reasons.join("; ")}`;
+    return [
+      wrapText(`${index + 1}. ${result.title}`, {
+        width: columns,
+        subsequentIndent: "   "
+      }),
+      wrapText(result.reasons.join("; "), {
+        width: columns,
+        indent: "   ",
+        subsequentIndent: "   "
+      })
+    ].join("\n");
   }).join("\n")}\n`;
 }
 
-function formatNoteSelection(result: SelectableNoteResult, field: "all" | "snippet" | "path" | "id" | "reason"): string {
+function formatNoteSelection(result: SelectableNoteResult, field: "all" | "snippet" | "path" | "id" | "reason", columns = 80): string {
   switch (field) {
     case "snippet":
-      return `${result.snippet}\n`;
+      return `${wrapText(result.snippet, { width: columns })}\n`;
     case "path":
-      return `${result.markdownPath}\n`;
+      return `${wrapText(result.markdownPath, { width: columns })}\n`;
     case "id":
       return `${result.id}\n`;
     case "reason":
-      return `${isRelatedResult(result) ? result.reasons.join("; ") : "No related-reason data for this search result."}\n`;
+      return `${wrapText(isRelatedResult(result) ? result.reasons.join("; ") : "No related-reason data for this search result.", { width: columns })}\n`;
     case "all":
-      return [
+      return wrapTerminalOutput([
         isRelatedResult(result) ? result.reasons.join("; ") : result.content,
         ...(isRelatedResult(result) ? [result.snippet] : []),
         result.markdownPath,
         `ID: ${result.id}`
-      ].join("\n") + "\n";
+      ].join("\n"), columns) + "\n";
   }
 }
 
@@ -582,7 +616,7 @@ function formatResolvedTarget(action: string, target: NoteResolutionCandidate): 
 
 function formatPendingWrite(write: PendingWrite): string {
   if (write.kind === "amend") {
-    return [
+    return wrapTerminalOutput([
       `Preview append to [${write.target.id}] ${write.target.title}`,
       write.target.markdownPath,
       "",
@@ -591,27 +625,27 @@ function formatPendingWrite(write: PendingWrite): string {
       write.text.trim(),
       "",
       "Write this update? y/N"
-    ].join("\n") + "\n";
+    ].join("\n"), terminalColumns()) + "\n";
   }
 
   if (write.kind === "edit") {
     const summary = write.raw.trim().split(/\r?\n/).find(Boolean) ?? "(empty)";
-    return [
+    return wrapTerminalOutput([
       `Preview replacement for [${write.target.id}] ${write.target.title}`,
       write.target.markdownPath,
       `Replacement raw capture: ${write.raw.trim().length} characters`,
       `First line: ${summary}`,
       "",
       "Write this replacement? y/N"
-    ].join("\n") + "\n";
+    ].join("\n"), terminalColumns()) + "\n";
   }
 
-  return [
+  return wrapTerminalOutput([
     `Preview delete [${write.target.id}] ${write.target.title}`,
     write.target.markdownPath,
     "",
     "Delete this note? y/N"
-  ].join("\n") + "\n";
+  ].join("\n"), terminalColumns()) + "\n";
 }
 
 function formatAmbiguousResolution(candidates: NoteResolutionCandidate[]): string {
@@ -625,7 +659,7 @@ function formatAmbiguousResolution(candidates: NoteResolutionCandidate[]): strin
       return `${index + 1}. [${candidate.id}] ${candidate.title}\n   ${candidate.markdownPath}\n   score ${candidate.score}: ${candidate.reasons.join("; ")}`;
     })
   ];
-  return `${lines.join("\n")}\n`;
+  return `${wrapTerminalOutput(lines.join("\n"), terminalColumns())}\n`;
 }
 
 async function editRawCapture(raw: string): Promise<string> {
@@ -731,7 +765,7 @@ function formatLocalDate(now: Date): string {
   return `${year}-${month}-${day}`;
 }
 
-function formatDecisionAnalysis(analysis: DecisionAnalysisResult): string {
+function formatDecisionAnalysis(analysis: DecisionAnalysisResult, columns = 80): string {
   if (analysis.relatedNotes.length === 0) {
     return `No saved notes matched ${analysis.query}.\n`;
   }
@@ -750,10 +784,10 @@ function formatDecisionAnalysis(analysis: DecisionAnalysisResult): string {
     lines.push(`   Confidence: ${item.confidence}`);
     lines.push(`   Notes: ${formatReferencedNotes(item.relatedNoteIds, titlesById)}`);
   });
-  return `${lines.join("\n")}\n`;
+  return `${wrapTerminalOutput(lines.join("\n"), columns)}\n`;
 }
 
-function formatGapAnalysis(analysis: GapAnalysisResult): string {
+function formatGapAnalysis(analysis: GapAnalysisResult, columns = 80): string {
   if (analysis.relatedNotes.length === 0) {
     return `No saved notes matched ${analysis.query}.\n`;
   }
@@ -770,10 +804,10 @@ function formatGapAnalysis(analysis: GapAnalysisResult): string {
     lines.push(`   Suggested question: ${item.suggestedQuestion}`);
     lines.push(`   Notes: ${formatReferencedNotes(item.relatedNoteIds, titlesById)}`);
   });
-  return `${lines.join("\n")}\n`;
+  return `${wrapTerminalOutput(lines.join("\n"), columns)}\n`;
 }
 
-function formatContextAnalysis(analysis: ContextAnalysisResult): string {
+function formatContextAnalysis(analysis: ContextAnalysisResult, columns = 80): string {
   if (analysis.relatedNotes.length === 0) {
     return `No saved notes matched ${analysis.query}.\n`;
   }
@@ -815,13 +849,13 @@ function formatContextAnalysis(analysis: ContextAnalysisResult): string {
   }
 
   lines.push("Related notes");
-  lines.push(formatRelatedResults(analysis.relatedNotes).trimEnd());
+  lines.push(formatRelatedResults(analysis.relatedNotes, columns).trimEnd());
 
   if (analysis.llmSkippedReason) {
     lines.push(analysis.llmSkippedReason);
   }
 
-  return `${lines.join("\n")}\n`;
+  return `${wrapTerminalOutput(lines.join("\n"), columns)}\n`;
 }
 
 function formatContextCorpus(notes: RelatedResult[]): string[] {
@@ -900,6 +934,10 @@ function formatReferencedNotes(noteIds: number[], titlesById: Map<number, string
       return title ? `[${id}] ${title}` : `[${id}]`;
     })
     .join(", ");
+}
+
+function terminalColumns(): number {
+  return Math.max(24, output.columns ?? 80);
 }
 
 main().catch((error: unknown) => {
