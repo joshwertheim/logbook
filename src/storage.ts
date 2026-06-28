@@ -67,10 +67,12 @@ export interface IndexResult {
 
 export class NoteStore {
   private readonly db: Database.Database;
+  private readonly notesDir: string;
 
   constructor(private readonly paths: StoragePaths) {
     fs.mkdirSync(paths.notesDir, { recursive: true });
     fs.mkdirSync(path.dirname(paths.dbPath), { recursive: true });
+    this.notesDir = path.resolve(paths.notesDir);
     this.db = new Database(paths.dbPath);
     this.migrate();
   }
@@ -82,7 +84,7 @@ export class NoteStore {
   saveDraft(draft: NoteDraft, now = new Date()): SavedNote {
     const timestamp = now.toISOString();
     const slug = slugify(draft.metadata.title);
-    const markdownFile = this.uniqueMarkdownPath(draft.metadata.title, now);
+    const markdownFile = this.assertNoteMarkdownPath(this.uniqueMarkdownPath(draft.metadata.title, now));
     fs.writeFileSync(markdownFile, renderMarkdown(draft), "utf8");
 
     const insert = this.db.prepare(`
@@ -160,6 +162,7 @@ export class NoteStore {
       return undefined;
     }
 
+    const markdownPath = this.assertNoteMarkdownPath(row.markdown_path);
     const deleted = rowToSavedNote(row);
     const deleteRows = this.db.transaction((id: number) => {
       this.db.prepare("DELETE FROM provider_runs WHERE note_id = ?").run(id);
@@ -168,7 +171,7 @@ export class NoteStore {
       this.db.prepare("DELETE FROM notes WHERE id = ?").run(id);
     });
     deleteRows(noteId);
-    fs.rmSync(row.markdown_path, { force: true });
+    fs.rmSync(markdownPath, { force: true });
     return deleted;
   }
 
@@ -197,7 +200,8 @@ export class NoteStore {
 
     const timestamp = now.toISOString();
     const slug = slugify(draft.metadata.title);
-    fs.writeFileSync(existing.markdown_path, renderMarkdown(draft), "utf8");
+    const markdownPath = this.assertWritableNoteMarkdownPath(existing.markdown_path);
+    fs.writeFileSync(markdownPath, renderMarkdown(draft), "utf8");
 
     this.db.prepare(`
       UPDATE notes
@@ -268,6 +272,11 @@ export class NoteStore {
     for (const filename of markdownFiles) {
       const markdownPath = path.join(this.paths.notesDir, filename);
       try {
+        if (fs.lstatSync(markdownPath).isSymbolicLink()) {
+          result.skipped.push({ markdownPath, reason: "symlinked Markdown files are not indexed" });
+          continue;
+        }
+
         const content = fs.readFileSync(markdownPath, "utf8");
         const parsed = parseMarkdownNote(content);
         if (!parsed) {
@@ -528,6 +537,23 @@ export class NoteStore {
       suffix += 1;
     }
     return candidate;
+  }
+
+  private assertWritableNoteMarkdownPath(markdownPath: string): string {
+    const resolved = this.assertNoteMarkdownPath(markdownPath);
+    if (fs.existsSync(resolved) && fs.lstatSync(resolved).isSymbolicLink()) {
+      throw new Error(`Refusing to write symlinked note path: ${markdownPath}`);
+    }
+    return resolved;
+  }
+
+  private assertNoteMarkdownPath(markdownPath: string): string {
+    const resolved = path.resolve(markdownPath);
+    const relative = path.relative(this.notesDir, resolved);
+    if (!relative || relative.startsWith("..") || path.isAbsolute(relative)) {
+      throw new Error(`Refusing to access note path outside notes directory: ${markdownPath}`);
+    }
+    return resolved;
   }
 
   private tagsForNote(noteId: number): string[] {

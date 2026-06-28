@@ -342,6 +342,101 @@ test("deletes saved notes from markdown and note-owned sqlite rows", () => {
   }
 });
 
+test("refuses to update notes whose stored markdown path leaves the notes directory", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "logbook-update-path-"));
+  const dbPath = path.join(dir, ".logbook", "logbook.sqlite");
+  const outsidePath = path.join(dir, "outside.md");
+  fs.writeFileSync(outsidePath, "outside content", "utf8");
+  const store = new NoteStore({
+    notesDir: path.join(dir, "notes"),
+    dbPath
+  });
+
+  try {
+    const saved = store.saveDraft({
+      raw: "Initial note.",
+      metadata: {
+        title: "Stored Path",
+        tags: [],
+        topics: [],
+        entities: [],
+        dates: [],
+        summary: "Initial note.",
+        type: "scratchpad"
+      }
+    }, new Date("2026-06-19T12:00:00Z"));
+
+    const db = new Database(dbPath);
+    try {
+      db.prepare("UPDATE notes SET markdown_path = ? WHERE id = ?").run(outsidePath, saved.id);
+    } finally {
+      db.close();
+    }
+
+    assert.throws(
+      () => store.updateDraft(saved.id, {
+        raw: "Replacement content.",
+        metadata: {
+          title: "Stored Path",
+          tags: [],
+          topics: [],
+          entities: [],
+          dates: [],
+          summary: "Replacement note.",
+          type: "scratchpad"
+        }
+      }),
+      /Refusing to access note path outside notes directory/
+    );
+    assert.equal(fs.readFileSync(outsidePath, "utf8"), "outside content");
+    assert.equal(store.getNote(saved.id)?.id, saved.id);
+  } finally {
+    store.close();
+  }
+});
+
+test("refuses to delete notes whose stored markdown path leaves the notes directory", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "logbook-delete-path-"));
+  const dbPath = path.join(dir, ".logbook", "logbook.sqlite");
+  const outsidePath = path.join(dir, "outside.md");
+  fs.writeFileSync(outsidePath, "outside content", "utf8");
+  const store = new NoteStore({
+    notesDir: path.join(dir, "notes"),
+    dbPath
+  });
+
+  try {
+    const saved = store.saveDraft({
+      raw: "Initial note.",
+      metadata: {
+        title: "Delete Path",
+        tags: [],
+        topics: [],
+        entities: [],
+        dates: [],
+        summary: "Initial note.",
+        type: "scratchpad"
+      }
+    }, new Date("2026-06-19T12:00:00Z"));
+
+    const db = new Database(dbPath);
+    try {
+      db.prepare("UPDATE notes SET markdown_path = ? WHERE id = ?").run(outsidePath, saved.id);
+    } finally {
+      db.close();
+    }
+
+    assert.throws(
+      () => store.deleteNote(saved.id),
+      /Refusing to access note path outside notes directory/
+    );
+    assert.equal(fs.readFileSync(outsidePath, "utf8"), "outside content");
+    assert.equal(store.getNote(saved.id)?.id, saved.id);
+  } finally {
+    store.close();
+  }
+});
+
 test("deleting a missing note returns undefined", () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "logbook-delete-missing-"));
   const store = new NoteStore({
@@ -446,6 +541,45 @@ test("indexes markdown edits into sqlite", () => {
     assert.deepEqual(results[0]?.tags, ["budget"]);
     assert.deepEqual(results[0]?.topics, ["Planning"]);
     assert.deepEqual(results[0]?.entities, [{ name: "Roadmap", type: "project" }]);
+  } finally {
+    store.close();
+  }
+});
+
+test("skips symlinked markdown files while indexing", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "logbook-index-symlink-"));
+  const notesDir = path.join(dir, "notes");
+  const outsidePath = path.join(dir, "outside.md");
+  const store = new NoteStore({
+    notesDir,
+    dbPath: path.join(dir, ".logbook", "logbook.sqlite")
+  });
+
+  try {
+    fs.writeFileSync(outsidePath, [
+      "---",
+      'title: "External Note"',
+      'type: "research"',
+      'summary: "External note."',
+      "tags: []",
+      "topics: []",
+      "entities: []",
+      "dates: []",
+      "---",
+      "# External Note",
+      "",
+      "## Raw Capture",
+      "",
+      "This note should not be indexed through a symlink."
+    ].join("\n"), "utf8");
+    fs.symlinkSync(outsidePath, path.join(notesDir, "external.md"));
+
+    const result = store.indexMarkdownNotes();
+
+    assert.equal(result.indexed, 0);
+    assert.equal(result.skipped.length, 1);
+    assert.equal(result.skipped[0]?.reason, "symlinked Markdown files are not indexed");
+    assert.equal(store.search("symlink").length, 0);
   } finally {
     store.close();
   }
