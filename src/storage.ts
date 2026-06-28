@@ -897,11 +897,74 @@ function rowToSavedNote(row: NoteRow): SavedNote {
 function makeSnippet(content: string, query: string): string {
   const index = content.toLowerCase().indexOf(query.toLowerCase());
   if (index === -1) {
-    return content.slice(0, 160);
+    return formatSnippet(content, 0, Math.min(content.length, 160));
   }
-  const start = Math.max(0, index - 60);
-  const end = Math.min(content.length, index + query.length + 100);
-  return content.slice(start, end).trim();
+  const lineStart = content.lastIndexOf("\n", index) + 1;
+  const nextLineBreak = content.indexOf("\n", index);
+  const lineEnd = nextLineBreak === -1 ? content.length : nextLineBreak;
+  const line = content.slice(lineStart, lineEnd).trim();
+
+  if (line.length > 0 && line.length <= 220) {
+    return line;
+  }
+
+  const sentenceRange = sentenceBounds(content, lineStart, lineEnd, index);
+  const sentence = content.slice(sentenceRange.start, sentenceRange.end).trim();
+  if (sentence.length > 0 && sentence.length <= 220) {
+    return sentence;
+  }
+
+  const start = Math.max(lineStart, index - 60);
+  const end = Math.min(lineEnd, index + query.length + 100);
+  return formatSnippet(content, start, end, lineStart, lineEnd);
+}
+
+function sentenceBounds(content: string, lineStart: number, lineEnd: number, index: number): { start: number; end: number } {
+  let start = lineStart;
+  for (let position = index - 1; position >= lineStart; position -= 1) {
+    if (/[.!?]/.test(content[position] ?? "") && /\s/.test(content[position + 1] ?? "")) {
+      start = position + 2;
+      break;
+    }
+  }
+
+  let end = lineEnd;
+  for (let position = index; position < lineEnd; position += 1) {
+    if (/[.!?]/.test(content[position] ?? "") && (position === lineEnd - 1 || /\s/.test(content[position + 1] ?? ""))) {
+      end = position + 1;
+      break;
+    }
+  }
+
+  return { start, end };
+}
+
+function formatSnippet(content: string, start: number, end: number, boundsStart = 0, boundsEnd = content.length): string {
+  let sliceStart = start;
+  let sliceEnd = end;
+  const clippedStart = start > boundsStart;
+  const clippedEnd = end < boundsEnd;
+
+  if (clippedStart && isNonWhitespace(content[start]) && isNonWhitespace(content[start - 1])) {
+    const nextWhitespaceIndex = content.slice(start, end).search(/\s/);
+    if (nextWhitespaceIndex !== -1) {
+      sliceStart = start + nextWhitespaceIndex + 1;
+    }
+  }
+
+  if (clippedEnd && isNonWhitespace(content[end]) && isNonWhitespace(content[end - 1])) {
+    const previousWhitespaceIndex = content.slice(sliceStart, end).search(/\s+\S*$/);
+    if (previousWhitespaceIndex !== -1) {
+      sliceEnd = sliceStart + previousWhitespaceIndex;
+    }
+  }
+
+  const snippet = content.slice(sliceStart, sliceEnd).trim();
+  return `${clippedStart ? "... " : ""}${snippet}${clippedEnd ? " ..." : ""}`;
+}
+
+function isNonWhitespace(value: string | undefined): boolean {
+  return value !== undefined && /\S/.test(value);
 }
 
 function escapeLikePattern(value: string): string {

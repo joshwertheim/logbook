@@ -126,6 +126,98 @@ test("search treats SQL LIKE metacharacters as literal text", () => {
   }
 });
 
+test("search snippets prefer the matched line over a raw character window", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "logbook-search-snippet-line-"));
+  const store = new NoteStore({
+    notesDir: path.join(dir, "notes"),
+    dbPath: path.join(dir, ".logbook", "logbook.sqlite")
+  });
+
+  try {
+    store.saveDraft({
+      raw: "Lorem ipsum has a certain je ne sais pas, doesn't it?\nThe Giants are losing again tonight. It's currently the bottom of the fifth and the score is 3-1, Braves.\nThe next line should not leak into the snippet.",
+      metadata: {
+        title: "Giants Game",
+        tags: ["baseball"],
+        topics: ["Sports"],
+        entities: [],
+        dates: [],
+        summary: "Giants game notes.",
+        type: "journal"
+      }
+    }, new Date("2026-06-19T12:00:00Z"));
+
+    const results = store.search("giants");
+
+    assert.equal(results.length, 1);
+    assert.equal(results[0]?.snippet, "The Giants are losing again tonight. It's currently the bottom of the fifth and the score is 3-1, Braves.");
+  } finally {
+    store.close();
+  }
+});
+
+test("search snippets mark clipped endings without partial trailing words", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "logbook-search-snippet-end-"));
+  const store = new NoteStore({
+    notesDir: path.join(dir, "notes"),
+    dbPath: path.join(dir, ".logbook", "logbook.sqlite")
+  });
+
+  try {
+    store.saveDraft({
+      raw: "Giants ".repeat(60) + "unfinished",
+      metadata: {
+        title: "Giants Game",
+        tags: ["baseball"],
+        topics: ["Sports"],
+        entities: [],
+        dates: [],
+        summary: "Giants game notes.",
+        type: "journal"
+      }
+    }, new Date("2026-06-19T12:00:00Z"));
+
+    const results = store.search("giants");
+
+    assert.equal(results.length, 1);
+    assert.equal(results[0]?.snippet.endsWith(" ..."), true);
+    assert.equal(results[0]?.snippet.includes("unfinished"), false);
+  } finally {
+    store.close();
+  }
+});
+
+test("search snippets mark clipped beginnings", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "logbook-search-snippet-start-"));
+  const store = new NoteStore({
+    notesDir: path.join(dir, "notes"),
+    dbPath: path.join(dir, ".logbook", "logbook.sqlite")
+  });
+
+  try {
+    store.saveDraft({
+      raw: "opening ".repeat(40) + "the Giants scored in the fifth inning.",
+      metadata: {
+        title: "Late Game",
+        tags: ["baseball"],
+        topics: ["Sports"],
+        entities: [],
+        dates: [],
+        summary: "Late game notes.",
+        type: "journal"
+      }
+    }, new Date("2026-06-19T12:00:00Z"));
+
+    const results = store.search("Giants");
+
+    assert.equal(results.length, 1);
+    assert.match(results[0]?.snippet ?? "", /^\.\.\. /);
+    assert.match(results[0]?.snippet ?? "", /Giants scored/);
+  } finally {
+    store.close();
+  }
+});
+
 test("updates saved notes in place and records a new version", () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "logbook-update-"));
   const dbPath = path.join(dir, ".logbook", "logbook.sqlite");
