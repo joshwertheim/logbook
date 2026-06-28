@@ -129,7 +129,7 @@ LLM calls happen in these cases:
 - `/decisions <query>` first finds deterministic candidates locally, then asks the model to synthesize supported decisions, rationale, and related note references from `untrustedNotes` JSON. This command requires a configured provider when matching notes exist.
 - `/gaps <query>` first finds deterministic candidates locally, then asks the model to identify important unexplained terms, entities, acronyms, or project names from `untrustedNotes` JSON. This command requires a configured provider when matching notes exist.
 
-These commands do not call the LLM provider: `/save`, autosave, `/new`, `/search`, `/check`, `/index`, `/provider`, `/help`, and `/quit`.
+These commands do not call the LLM provider: `/save`, autosave, `/new`, `/search`, `/amend`, `/edit`, `/delete`, `/check`, `/index`, `/provider`, `/help`, and `/quit`.
 
 ## Commands
 
@@ -144,6 +144,7 @@ Press Tab while typing a slash command to autocomplete matching commands, such a
 - `/search <query>` searches stored notes.
 - `/amend <query>` appends a dated update to an existing saved note.
 - `/edit <query>` edits the raw capture of an existing saved note.
+- `/delete <query>` deletes an existing saved note after confirmation.
 - `/related [query]` finds saved notes related to the current note or supplied query.
 - `/context <query>` creates a concise knowledge snapshot from related saved notes, including a corpus summary of the notes used. Its related notes are numbered for `/note` inspection.
 - `/decisions <query>` synthesizes decisions and rationale from related notes.
