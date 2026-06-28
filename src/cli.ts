@@ -48,7 +48,8 @@ type ComposeBuffer =
 
 type PendingWrite =
   | { kind: "amend"; target: NoteResolutionCandidate; text: string; now: Date }
-  | { kind: "edit"; target: NoteResolutionCandidate; raw: string };
+  | { kind: "edit"; target: NoteResolutionCandidate; raw: string }
+  | { kind: "delete"; target: NoteResolutionCandidate };
 
 type SelectableNoteResult = SearchResult | RelatedResult;
 type ResolvedCommandTarget =
@@ -84,7 +85,7 @@ async function main(): Promise<void> {
 
   const writePrompt = (): void => {
     if (isTerminal) {
-      rl.setPrompt(pendingWrite ? "Confirm write (y/N) " : composeBuffer ? "| " : "> ");
+      rl.setPrompt(pendingWrite ? "Confirm (y/N) " : composeBuffer ? "| " : "> ");
       rl.prompt();
     }
   };
@@ -134,17 +135,27 @@ async function main(): Promise<void> {
         const confirmed = /^(?:y|yes)$/i.test(line.trim());
         if (!confirmed) {
           pendingWrite = undefined;
-          output.write("No changes written.\n");
+          output.write("Canceled.\n");
           writePrompt();
           continue;
         }
 
         const write = pendingWrite;
         pendingWrite = undefined;
-        const saved = write.kind === "amend"
-          ? await session.appendToExistingNote(write.target.id, write.text, write.now)
-          : await session.replaceExistingNote(write.target.id, write.raw);
-        output.write(`Updated ${saved.title}\n${saved.markdownPath}\n`);
+        if (write.kind === "delete") {
+          const deleted = session.deleteNote(write.target.id);
+          if (!deleted) {
+            output.write(`Cannot delete missing note ${write.target.id}.\n`);
+          } else {
+            lastNoteResults = lastNoteResults.filter((result) => result.id !== deleted.id);
+            output.write(`Deleted ${deleted.title}\n${deleted.markdownPath}\n`);
+          }
+        } else {
+          const saved = write.kind === "amend"
+            ? await session.appendToExistingNote(write.target.id, write.text, write.now)
+            : await session.replaceExistingNote(write.target.id, write.raw);
+          output.write(`Updated ${saved.title}\n${saved.markdownPath}\n`);
+        }
         writePrompt();
         continue;
       }
@@ -282,6 +293,24 @@ async function main(): Promise<void> {
               rl.resume();
             }
             pendingWrite = { kind: "edit", target: resolved.target, raw: edited };
+            output.write(formatPendingWrite(pendingWrite));
+            break;
+          }
+          case "delete": {
+            if (!parsed.args.trim()) {
+              output.write("Usage: /delete <query>\n");
+              break;
+            }
+            const resolved = await resolveCommandTarget(session, parsed.args, lastNoteResults);
+            if (resolved.kind === "ambiguous") {
+              const { resolution } = resolved;
+              output.write(formatAmbiguousResolution(resolution.candidates));
+              if (resolution.llmSkippedReason) {
+                output.write(`${resolution.llmSkippedReason}\n`);
+              }
+              break;
+            }
+            pendingWrite = { kind: "delete", target: resolved.target };
             output.write(formatPendingWrite(pendingWrite));
             break;
           }
@@ -565,14 +594,23 @@ function formatPendingWrite(write: PendingWrite): string {
     ].join("\n") + "\n";
   }
 
-  const summary = write.raw.trim().split(/\r?\n/).find(Boolean) ?? "(empty)";
+  if (write.kind === "edit") {
+    const summary = write.raw.trim().split(/\r?\n/).find(Boolean) ?? "(empty)";
+    return [
+      `Preview replacement for [${write.target.id}] ${write.target.title}`,
+      write.target.markdownPath,
+      `Replacement raw capture: ${write.raw.trim().length} characters`,
+      `First line: ${summary}`,
+      "",
+      "Write this replacement? y/N"
+    ].join("\n") + "\n";
+  }
+
   return [
-    `Preview replacement for [${write.target.id}] ${write.target.title}`,
+    `Preview delete [${write.target.id}] ${write.target.title}`,
     write.target.markdownPath,
-    `Replacement raw capture: ${write.raw.trim().length} characters`,
-    `First line: ${summary}`,
     "",
-    "Write this replacement? y/N"
+    "Delete this note? y/N"
   ].join("\n") + "\n";
 }
 

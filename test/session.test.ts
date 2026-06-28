@@ -767,6 +767,54 @@ test("replaceExistingNote replaces raw capture, clears processed content, and pr
   }
 });
 
+test("deleteNote deletes an existing saved note", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "logbook-session-delete-"));
+  const store = new NoteStore({
+    notesDir: path.join(dir, "notes"),
+    dbPath: path.join(dir, ".logbook", "logbook.sqlite")
+  });
+  const session = new NoteSession(store);
+
+  try {
+    const saved = store.saveDraft({
+      raw: "Delete this saved launch note.",
+      metadata: {
+        title: "Delete Target",
+        tags: ["launch"],
+        topics: [],
+        entities: [],
+        dates: [],
+        summary: "Delete target note.",
+        type: "scratchpad"
+      }
+    });
+
+    const deleted = session.deleteNote(saved.id);
+
+    assert.equal(deleted?.id, saved.id);
+    assert.equal(deleted?.title, "Delete Target");
+    assert.equal(fs.existsSync(saved.markdownPath), false);
+    assert.equal(session.search("launch").length, 0);
+  } finally {
+    store.close();
+  }
+});
+
+test("deleteNote returns undefined for a missing saved note", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "logbook-session-delete-missing-"));
+  const store = new NoteStore({
+    notesDir: path.join(dir, "notes"),
+    dbPath: path.join(dir, ".logbook", "logbook.sqlite")
+  });
+  const session = new NoteSession(store);
+
+  try {
+    assert.equal(session.deleteNote(404), undefined);
+  } finally {
+    store.close();
+  }
+});
+
 test("new note resets save tracking so the next save creates a separate file", async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "logbook-session-new-"));
   const store = new NoteStore({

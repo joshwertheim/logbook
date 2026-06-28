@@ -154,6 +154,24 @@ export class NoteStore {
     return row ? rowToSavedNote(row) : undefined;
   }
 
+  deleteNote(noteId: number): SavedNote | undefined {
+    const row = this.db.prepare("SELECT * FROM notes WHERE id = ?").get(noteId) as NoteRow | undefined;
+    if (!row) {
+      return undefined;
+    }
+
+    const deleted = rowToSavedNote(row);
+    const deleteRows = this.db.transaction((id: number) => {
+      this.db.prepare("DELETE FROM provider_runs WHERE note_id = ?").run(id);
+      this.db.prepare("DELETE FROM note_tags WHERE note_id = ?").run(id);
+      this.db.prepare("DELETE FROM note_versions WHERE note_id = ?").run(id);
+      this.db.prepare("DELETE FROM notes WHERE id = ?").run(id);
+    });
+    deleteRows(noteId);
+    fs.rmSync(row.markdown_path, { force: true });
+    return deleted;
+  }
+
   resolveNoteCandidates(query: string): NoteResolutionCandidate[] {
     const trimmed = query.trim();
     if (!trimmed) {

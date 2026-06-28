@@ -186,6 +186,84 @@ test("updates saved notes in place and records a new version", () => {
   }
 });
 
+test("deletes saved notes from markdown and note-owned sqlite rows", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "logbook-delete-"));
+  const dbPath = path.join(dir, ".logbook", "logbook.sqlite");
+  const store = new NoteStore({
+    notesDir: path.join(dir, "notes"),
+    dbPath
+  });
+
+  try {
+    const saved = store.saveDraft({
+      raw: "Quarterly launch plan with provider transcript.",
+      metadata: {
+        title: "Quarterly Plan",
+        tags: ["launch", "planning"],
+        topics: [],
+        entities: [],
+        dates: [],
+        summary: "Quarterly planning note.",
+        type: "meeting"
+      }
+    }, new Date("2026-06-19T12:00:00Z"));
+
+    store.updateDraft(saved.id, {
+      raw: "Quarterly launch plan with revised provider transcript.",
+      metadata: {
+        title: "Quarterly Plan",
+        tags: ["planning"],
+        topics: [],
+        entities: [],
+        dates: [],
+        summary: "Revised quarterly planning note.",
+        type: "meeting"
+      }
+    }, new Date("2026-06-19T12:05:00Z"));
+    store.recordProviderRun({
+      noteId: saved.id,
+      provider: "test",
+      model: "mock",
+      prompt: "organize quarterly launch plan",
+      response: "organized quarterly launch plan",
+      status: "ok"
+    }, new Date("2026-06-19T12:06:00Z"));
+
+    const deleted = store.deleteNote(saved.id);
+
+    assert.equal(deleted?.id, saved.id);
+    assert.equal(deleted?.title, "Quarterly Plan");
+    assert.equal(fs.existsSync(saved.markdownPath), false);
+    assert.equal(store.search("quarterly").length, 0);
+
+    const db = new Database(dbPath);
+    try {
+      for (const table of ["notes", "note_versions", "note_tags", "provider_runs"]) {
+        const row = db.prepare(`SELECT COUNT(*) AS count FROM ${table} WHERE ${table === "notes" ? "id" : "note_id"} = ?`).get(saved.id) as { count: number };
+        assert.equal(row.count, 0, table);
+      }
+    } finally {
+      db.close();
+    }
+  } finally {
+    store.close();
+  }
+});
+
+test("deleting a missing note returns undefined", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "logbook-delete-missing-"));
+  const store = new NoteStore({
+    notesDir: path.join(dir, "notes"),
+    dbPath: path.join(dir, ".logbook", "logbook.sqlite")
+  });
+
+  try {
+    assert.equal(store.deleteNote(404), undefined);
+  } finally {
+    store.close();
+  }
+});
+
 test("resolves exact note candidates by id, title, path, and basename", () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "logbook-resolve-exact-"));
   const store = new NoteStore({

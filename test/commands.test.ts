@@ -25,6 +25,11 @@ test("parses slash commands with args", () => {
     name: "edit",
     args: "quarterly plan"
   });
+  assert.deepEqual(parseInput("/delete quarterly plan"), {
+    kind: "command",
+    name: "delete",
+    args: "quarterly plan"
+  });
 });
 
 test("parses check command with natural language args", () => {
@@ -119,6 +124,7 @@ test("parses related selection args", () => {
 test("help text documents related command", () => {
   assert.match(helpText(), /\/amend <query>/);
   assert.match(helpText(), /\/edit <query>/);
+  assert.match(helpText(), /\/delete <query>/);
   assert.match(helpText(), /\/related \[query\]/);
   assert.match(helpText(), /\/context \[--with-content\] <query>/);
   assert.match(helpText(), /\/decisions \[--with-content\] <query>/);
@@ -181,6 +187,7 @@ test("completes slash command prefixes", () => {
   assert.deepEqual(completeSlashCommand("/rel"), [["/related"], "/rel"]);
   assert.deepEqual(completeSlashCommand("/ame"), [["/amend"], "/ame"]);
   assert.deepEqual(completeSlashCommand("/edi"), [["/edit"], "/edi"]);
+  assert.deepEqual(completeSlashCommand("/del"), [["/delete"], "/del"]);
   assert.deepEqual(completeSlashCommand("/mul"), [["/multiline"], "/mul"]);
   assert.deepEqual(completeSlashCommand("/con"), [["/context"], "/con"]);
   assert.deepEqual(completeSlashCommand("/dec"), [["/decisions"], "/dec"]);

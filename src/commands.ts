@@ -8,6 +8,7 @@ export type SlashCommandName =
   | "search"
   | "amend"
   | "edit"
+  | "delete"
   | "related"
   | "context"
   | "decisions"
@@ -51,6 +52,7 @@ export const slashCommands: SlashCommandName[] = [
   "search",
   "amend",
   "edit",
+  "delete",
   "related",
   "context",
   "decisions",
@@ -116,6 +118,7 @@ export function helpText(): string {
     "/search <query> - search stored notes",
     "/amend <query> - append a dated update to an existing saved note",
     "/edit <query> - edit the raw capture of an existing saved note",
+    "/delete <query> - delete an existing saved note after confirmation",
     "/related [query] - find saved notes related to the current note or supplied query",
     "/context [--with-content] <query> - create a concise snapshot from related saved notes",
     "/decisions [--with-content] <query> - synthesize decisions and rationale from related notes",

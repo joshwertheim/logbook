@@ -178,6 +178,10 @@ export class NoteSession {
     return this.store.getDraft(noteId);
   }
 
+  deleteNote(noteId: number): SavedNote | undefined {
+    return this.store.deleteNote(noteId);
+  }
+
   async resolveNote(query: string): Promise<NoteResolutionResult> {
     const trimmed = query.trim();
     if (!trimmed) {
