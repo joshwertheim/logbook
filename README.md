@@ -1,5 +1,7 @@
 # Logbook
 
+![preview tape](github.gif)
+
 A CLI-first note-taking LLM harness. It captures raw notes, enriches them with lightweight metadata, stores readable Markdown files, and records searchable note data in SQLite.
 
 ## Requirements
